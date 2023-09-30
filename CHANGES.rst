@@ -1,6 +1,12 @@
 1.0.1 (unreleased)
 ==================
 
+- spacekit.transformer : tx_file can be saved as custom filename (default is 'tx_data.json')
+- jwst.predict: added spec model, preprocessing, inference
+- jwst.predict: load distinct tx_data files according to exp_mode (e.g. 'tx_data-spec.json')
+- jwstcalprep: additional params for spectral data
+- jwstcalprep: tx_data automatically saved according to exp_mode in its filename
+
 installation / automation
 -------------------------
 

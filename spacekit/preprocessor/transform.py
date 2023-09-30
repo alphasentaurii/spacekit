@@ -48,6 +48,7 @@ class SkyTransformer:
         * instr="INSTRUME"
         * detector="DETECTOR"
         * channel="CHANNEL"
+        * band="BAND"
         * exp_type="EXP_TYPE"
         * ra="CRVAL1" / could also use "RA_REF"
         * dec="CRVAL2" / could also use "DEC_REF"
@@ -55,9 +56,12 @@ class SkyTransformer:
         self.instr_key = kwargs.get("instr", "INSTRUME")
         self.detector_key = kwargs.get("detector", "DETECTOR")
         self.channel_key = kwargs.get("channel", "CHANNEL")
+        self.band_key = kwargs.get("band", "BAND")
         self.exp_key = kwargs.get("exp_type", "EXP_TYPE")
         self.ra_key = kwargs.get("ra", "CRVAL1")
         self.dec_key = kwargs.get("dec", "CRVAL2")
+        self.ra_key2 == "RA_REF" if self.ra_key == "CRVAL1" else "CRVAL1"
+        self.dec_key2 == "DEC_REF" if self.dec_key == "CRVAL2" else "CRVAL2"
 
     def calculate_offsets(self, product_exp_headers):
         """Given key-value pairs of header info from a set of input exposures,
@@ -94,14 +98,15 @@ class SkyTransformer:
             refpix = dict(NEXPOSUR=len(list(exp_data.keys())))
         else:
             refpix = dict()
-        offsets, targ_offsets, detectors = [], [], []
+        offsets, targ_offsets, detectors, bands = [], [], [], []
         targ_radec = None
         for exp, data in exp_data.items():
             instr = data[self.instr_key]
             detector = data.get(self.detector_key, None)
             channel = data.get(self.channel_key, None)
+            band = data.get(self.band_key, None)
             exp_type = data.get(self.exp_key, None)
-            fiducial = (data[self.ra_key], data[self.dec_key])
+            fiducial = (data.get(self.ra_key, self.ra_key2), data.get(self.dec_key, self.dec_key2))
             scale = self.get_scale(
                 instr, channel=channel, detector=detector, exp_type=exp_type
             )
@@ -119,6 +124,9 @@ class SkyTransformer:
                 targ_radec = (data["TARG_RA"], data["TARG_DEC"])
             if detector is not None and detector.upper() not in detectors:
                 detectors.append(detector.upper())
+            # MIRI MRS: determine bands used: short, long, shortmedium, shortmediumlong
+            if band is not None and band.upper() not in bands:
+                bands.append(band.upper())
         # find fiducial (final product)
         footprints = [v["footprint"] for v in exp_data.values()]
         lon_fiducial, lat_fiducial = self.estimate_fiducial(footprints)
@@ -141,7 +149,7 @@ class SkyTransformer:
         keys = [
             k
             for k in list(exp_data[ref_exp].keys())
-            if k not in ["DETECTOR", "footprint", "fiducial"]
+            if k not in ["DETECTOR", "BAND", "footprint", "fiducial"]
         ]
         for k in keys:
             refpix[k] = exp_data[ref_exp][k]
@@ -149,6 +157,12 @@ class SkyTransformer:
             refpix["DETECTOR"] = "|".join(sorted([d for d in detectors]))
         else:
             refpix["DETECTOR"] = detectors[0]
+        if len(bands) > 1:
+            refpix["BAND"] = "|".join(sorted([b for b in bands], reverse=True))
+        elif len(bands) == 1:
+            refpix["BAND"] = bands[0]
+        else:
+            refpix["BAND"] = 'NONE'
         # offset statistics
         offset_stats = self.offset_statistics(offsets)
         targ_offset_stats = self.offset_statistics(targ_offsets, pfx="targ_")
@@ -283,7 +297,7 @@ class Transformer:
         name="Transformer",
         **log_kws,
     ):
-        """Instantiates a Transformer class object. Unless the `cols` attribute is empty, it will automatically instantiate some
+        """Initializes a Transformer class object. Unless the `cols` attribute is empty, it will automatically instantiate some
         of the other attributes needed to transform the data. Using the Transformer subclasses instead is recommended (this
         class is mainly used as an object with general methods to load or save the transform data as well as instantiate some of
         the initial attributes).
@@ -359,7 +373,7 @@ class Transformer:
         else:
             return None
 
-    def save_transformer_data(self, tx=None):
+    def save_transformer_data(self, tx=None, fname="tx_data.json"):
         """Save the transform metadata to a json file on local disk. Typical use-case is when you need to transform new inputs
         prior to generating a prediction but don't have access to the original dataset used to train the model.
 
@@ -378,7 +392,7 @@ class Transformer:
             self.output_path = os.getcwd()
         else:
             os.makedirs(self.output_path, exist_ok=True)
-        self.tx_file = f"{self.output_path}/tx_data.json"
+        self.tx_file = f"{self.output_path}/{fname}"
         with open(self.tx_file, "w") as j:
             if tx is None:
                 json.dump(self.tx_data, j)
@@ -537,6 +551,7 @@ class PowerX(Transformer):
         tx_data=None,
         tx_file=None,
         save_tx=False,
+        save_as="tx_data.json",
         output_path=None,
         join_data=1,
         rename="_scl",
@@ -555,6 +570,7 @@ class PowerX(Transformer):
             name="PowerX",
             **log_kws,
         )
+        self.fname = save_as
         self.calculate_power()
         self.normalized = self.apply_power_matrix()
         self.Xt = super().normalizeX(self.normalized)
@@ -627,7 +643,7 @@ class PowerX(Transformer):
                 tx2 = {}
                 for k, v in self.tx_data.items():
                     tx2[k] = list(v)
-                _ = super().save_transformer_data(tx=tx2)
+                _ = super().save_transformer_data(tx=tx2, fname=self.fname)
                 del tx2
         return self
 

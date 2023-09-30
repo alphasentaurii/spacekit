@@ -929,6 +929,13 @@ class JwstFitsScraper(FitsScraper):
         self.exp_headers = None
 
     def general_header_keys(self):
+        """General header key names to scrape from input exposure fits files.
+
+        Returns
+        -------
+        list
+            list of key names to scrape from fits header extension 0.
+        """
         return [
             "PROGRAM",  # Program number
             "OBSERVTN",  # Observation number
@@ -945,8 +952,10 @@ class JwstFitsScraper(FitsScraper):
             "FILTER",  # Name of the filter element used
             "PUPIL",  # Name of the pupil element used
             "GRATING",  # Name of the grating element used (SPEC)
+            "FXD_SLIT",  # Name of fixed slit aperture used
             "EXP_TYPE",  # Type of data in the exposure
             "CHANNEL",  # Instrument channel
+            "BAND", # MRS wavelength band 
             "SUBARRAY",  # Subarray used
             "NUMDTHPT",  # Total number of points in pattern
             "GS_RA",  # guide star right ascension
@@ -956,6 +965,13 @@ class JwstFitsScraper(FitsScraper):
         ]
 
     def science_header_keys(self):
+        """Science header key names to scrape from input exposure fits files science headers.
+
+        Returns
+        -------
+        list
+            list of key names to scrape from fits header science extension headers.
+        """
         return [
             "RA_REF",
             "DEC_REF",

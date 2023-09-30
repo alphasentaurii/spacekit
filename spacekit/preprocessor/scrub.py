@@ -514,6 +514,13 @@ class HstCalScrubber(Scrubber):
 
 
 class JwstCalScrubber(Scrubber):
+    """Class for invoking initial preprocessing of JWST calibration input data.
+
+    Parameters
+    ----------
+    Scrubber : class
+        spacekit.preprocessor.scrub.Scrubber parent class
+    """
     def __init__(
         self,
         input_path,
@@ -525,6 +532,25 @@ class JwstCalScrubber(Scrubber):
         encoding_pairs=None,
         **log_kws,
     ):
+        """Initializes a JwstCalScrubber class object.
+
+        Parameters
+        ----------
+        input_path : str or path
+            path on local disk where L1 input exposures are located
+        data : pd.DataFrame, optional
+            dataframe of exposures to be preprocessed, by default None
+        pfx : str, optional
+            limit scrape search to files starting with a given prefix such as 'jw01018', by default ""
+        sfx : str, optional
+            limit scrape search to files ending with a given suffix, by default "_uncal.fits"
+        dropnans : bool, optional
+            drop null value columns, by default False
+        save_raw : bool, optional
+            save a copy of the dataframe before encoding, by default True
+        encoding_pairs : dict, optional
+            preset key-value pairs for encoding categorical data, by default None
+        """
         self.input_path = input_path
         self.exp_headers = None
         self.products = dict()
@@ -549,6 +575,13 @@ class JwstCalScrubber(Scrubber):
         self.pixel_offsets()
 
     def set_col_order(self):
+        """Used for resetting the order of columns in the final preprocessed dataframe.
+
+        Returns
+        -------
+        list
+            complete list of columns to include for JWST modeling
+        """
         return [
             "instr",
             "detector",
@@ -557,6 +590,7 @@ class JwstCalScrubber(Scrubber):
             "filter",
             "pupil",
             "grating",
+            "fxd_slit",
             "channel",
             "subarray",
             "bkgdtarg",
@@ -564,6 +598,7 @@ class JwstCalScrubber(Scrubber):
             "tsovisit",
             "nexposur",
             "numdthpt",
+            "band",
             "targ_max_offset",
             "offset",
             "max_offset",
@@ -578,21 +613,28 @@ class JwstCalScrubber(Scrubber):
         ]
 
     def level3_types(self):
+        """Exposure types included in Level 3 data processing.
+
+        Returns
+        -------
+        list
+            Level 3 exposure types
+        """
         return [
             "FGS_IMAGE",
             "MIR_IMAGE",  # (TSO & Non-TSO)
             "NRC_IMAGE",
             "MIR_LRS-FIXEDSLIT",
             "MIR_MRS",
-            "MIR_LYOT",
-            "MIR_4QPM",
+            "MIR_LYOT", # coron
+            "MIR_4QPM", # coron
             "MIR_LRS-SLITLESS",  # (only IF TSO)
-            "NRC_CORON",
+            "NRC_CORON", # coron
             "NRC_WFSS",
             "NRC_TSIMAGE",  # TSO always
             "NRC_TSGRISM",  # TSO always
             "NIS_IMAGE",
-            "NIS_AMI",
+            "NIS_AMI", # AMI
             "NIS_WFSS",
             "NIS_SOSS",  # (TSO & Non-TSO)
             "NRS_FIXEDSLIT",
@@ -602,6 +644,8 @@ class JwstCalScrubber(Scrubber):
         ]
 
     def scrape_inputs(self):
+        """Scrape input exposure header metadata from fits files on local disk located at `self.input_path`.
+        """
         self.scraper = JwstFitsScraper(
             self.input_path, data=self.df, pfx=self.pfx, sfx=self.sfx
         )
@@ -609,6 +653,8 @@ class JwstCalScrubber(Scrubber):
         self.exp_headers = self.scraper.scrape_fits()
 
     def pixel_offsets(self):
+        """Generate the pixel offset between exposure reference pixels and the estimated L3 fiducial.
+        """
         sky = SkyTransformer("JWST")
         self.imgpix = sky.calculate_offsets(self.img_products)
         self.products.update(self.imgpix)
@@ -621,6 +667,17 @@ class JwstCalScrubber(Scrubber):
         self.update_fgs()
 
     def make_image_product_name(self, k, v, tnum):
+        """Parse through exposure metadata to create expected L3 image products.
+
+        Parameters
+        ----------
+        k : str
+            exposure header key (L1 exposure name)
+        v : dict
+            exposure header data
+        tnum : str
+            number assigned to each unique target name within a program
+        """
         if v["PUPIL"] == "CLEAR":
             p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}-{tnum}_{v['INSTRUME']}_{v['PUPIL']}-{v['FILTER']}"
         elif v["PUPIL"] not in ["NaN", "N/A", "NONE"]:
@@ -635,15 +692,46 @@ class JwstCalScrubber(Scrubber):
             self.img_products[p] = {k: v}
 
     def make_spec_product_name(self, k, v, tnum):
+        """Parse through exposure metadata to create expected L3 spectroscopy products. 
+        NOTE: Although the pipeline would create multiple products for either source-based exposures
+        or (channel-based) MIRI MRS exposures, only one product name will be created since the model is
+        concerned with RAM, i.e. how large the memory footprint is to calibrate a set of input exposures.
+
+        Parameters
+        ----------
+        k : str
+            exposure header key (L1 exposure name)
+        v : dict
+            exposure header data
+        tnum : str
+            number assigned to each unique target name within a program
+        """
         if v["EXP_TYPE"] == "MIR_LRS-SLITLESS" and v["TSOVISIT"] is False:
             return
-        fltr = f"_{v['FILTER']}" if v["FILTER"] not in ["NaN", "N/A", "NONE"] else ""
+        pupil = f"{v['PUPIL']}" if v["PUPIL"] not in ["NaN", "N/A", "NONE"] else ""
+        fltr = f"{v['FILTER']}" if v["FILTER"] not in ["NaN", "N/A", "NONE"] else ""
         grating = (
-            f"_{v['GRATING']}" if v["GRATING"] not in ["NaN", "N/A", "NONE"] else ""
+            f"{v['GRATING']}" if v["GRATING"] not in ["NaN", "N/A", "NONE"] else ""
         )
-        if fltr and grating:
-            grating = f"-{v['GRATING']}"
-        p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}-{tnum}_{v['INSTRUME']}{fltr}{grating}"
+        if fltr or grating:
+            if not grating:
+                if pupil:
+                    # NIRISS: jw01089-o001_{source_id}_niriss_f140m-gr150r
+                    optelem = f"{pupil}-{fltr}"
+                else:
+                    optelem = fltr # miri, niriss
+            elif not fltr:
+                optelem = grating
+            elif v['EXP_TYPE'] == "NRS_IFU":
+                # jw01022-o016_t001_nirspec_g140h-f100lp
+                optelem = f"{grating}-{fltr}"
+            else:
+                optelem = f"{fltr}-{grating}" # 'jw01117-o021_{source_id}_nirspec_clear-prism'
+        else:
+            optelem = "" # miri mrs
+        slit = f"-{v['FXD_SLIT']}" if v["FXD_SLIT"] not in ["NaN", "N/A", "NONE"] else ""
+        subarray = f"-{v['SUBARRAY']}" if v["SUBARRAY"] not in ["NaN", "N/A", "NONE", "FULL"] else ""
+        p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}-{tnum}_{v['INSTRUME']}_{optelem}{slit}{subarray}"
         p = p.lower()
         del v["NEXPOSUR"]
         if p in self.spec_products:
@@ -671,8 +759,9 @@ class JwstCalScrubber(Scrubber):
             self.tac_products[p] = {k: v}
 
     def get_level3_products(self):
-        # determine potential L3 products based on obs, filters, detectors, etc
-        # group by target+obs num+filter (+pupil)
+        """Determines potential L3 products based on obs, filters, detectors, etc
+        Then groups input exposures by target+obs num+optelem(+fxd_slit,+subarray)
+        """
         l3_types = self.level3_types()
         targetnames = list(set([v["TARGNAME"] for v in self.exp_headers.values()]))
         tnums = [f"t{i+1}" for i, _ in enumerate(targetnames)]
@@ -709,6 +798,13 @@ class JwstCalScrubber(Scrubber):
                 self.products[product] = exp_data
 
     def input_data(self):
+        """Preprocessed input data grouped by exposure type
+
+        Returns
+        -------
+        dict
+            input data grouped by exp_type (IMAGE, SPEC, FGS, TAC)
+        """
         return dict(
             IMAGE=self.imgpix,
             SPEC=self.specpix,
@@ -717,6 +813,18 @@ class JwstCalScrubber(Scrubber):
         )
 
     def scrub_inputs(self, exp_type="IMAGE"):
+        """Main calling function for preprocessing input exposures of a given exposure type.
+
+        Parameters
+        ----------
+        exp_type : str, optional
+            Exposure type, by default "IMAGE"
+
+        Returns
+        -------
+        pd.DataFrame
+            preprocessed data with renamed columns, NaNs scrubbed and categorical data encoded
+        """
         data = self.input_data()[exp_type]
         if not data:
             return None
@@ -736,6 +844,13 @@ class JwstCalScrubber(Scrubber):
         return self.df
 
     def get_dtype_keys(self):
+        """Group input metadata into pre-set data types before applying NaNdlers.
+
+        Returns
+        -------
+        dict
+            key-value pairs of data type and exposure header / column name
+        """
         return dict(
             continuous=[
                 "nexposur",
@@ -760,6 +875,7 @@ class JwstCalScrubber(Scrubber):
                 "grating",
                 "exp_type",
                 "channel",
+                "band",
                 "subarray",
                 "visitype",
             ],

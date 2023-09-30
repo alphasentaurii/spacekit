@@ -63,7 +63,7 @@ class JwstCalPredict:
         self.X = None
         self.img3_reg = None
         # self.img3_clf = None
-        # self.spec3_reg = None
+        self.spec3_reg = None
         self.__name__ = "JwstCalPredict"
         self.log = Logger(self.__name__, **log_kws).setup_logger(logger=SPACEKIT_LOG)
         self.log_kws = dict(log=self.log, **log_kws)
@@ -86,8 +86,9 @@ class JwstCalPredict:
         norm_cols = NORM_COLS.get(order, self.norm_cols)
         if self.norm:
             self.log.info(f"Applying normalization [{order}]...")
+            tx_file = self.tx_file.split(".")[0] + f"-{order.lower()}.json"  # "{path}/tx_data-image.json"
             Px = PowerX(
-                inputs, cols=norm_cols, tx_file=self.tx_file, rename=None, join_data=1
+                inputs, cols=norm_cols, tx_file=tx_file, rename=None, join_data=1
             )
             X = Px.Xt
             self.tx_data = Px.tx_data
@@ -128,7 +129,7 @@ class JwstCalPredict:
             encoding_pairs=KEYPAIR_DATA,
             **self.log_kws,
         )
-        for exp_type in ["IMAGE"]:  # ["IMAGE", "SPEC", "TAC", "FGS"]:
+        for exp_type in ["IMAGE", "SPEC"]:  # ["IMAGE", "SPEC", "TAC", "FGS"]:
             inputs = scrubber.scrub_inputs(exp_type=exp_type)
             if inputs is not None:
                 self.input_data[exp_type] = inputs
@@ -147,16 +148,16 @@ class JwstCalPredict:
                 model_path=self.model_path, name="img3_reg", **self.log_kws
             ),
         )
-        # self.spec3_reg = models.get(
-        #     "spec3_reg",
-        #     load_pretrained_model(
-        #         model_path=self.model_path, name="spec3_reg", **self.log_kws
-        #     ),
-        # )
+        self.spec3_reg = models.get(
+            "spec3_reg",
+            load_pretrained_model(
+                model_path=self.model_path, name="spec3_reg", **self.log_kws
+            ),
+        )
         if self.model_path is None:
             self.model_path = os.path.dirname(self.img3_reg.model_path)
         if self.tx_file is None or not os.path.exists(self.tx_file):
-            self.img3_reg.find_tx_file()
+            self.img3_reg.find_tx_file(name="tx_data.json")
             self.tx_file = self.img3_reg.tx_file
 
     def classifier(self, model, data):
@@ -211,7 +212,7 @@ class JwstCalPredict:
             self.preprocess()
         self.log.info("Estimating Level 3 output image sizes...")
         self.run_image_inference()
-        # self.run_spec_inference()
+        self.run_spec_inference()
         self.log.info(f"predictions: {self.predictions}")
         # self.log.info(f"probabilities: {self.probabilities}")
 
