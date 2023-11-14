@@ -9,6 +9,7 @@ Program (PID) of exposures comes into pipeline
 7. run inference
 """
 import os
+import sys
 import argparse
 import numpy as np
 from spacekit.logger.log import SPACEKIT_LOG, Logger
@@ -36,6 +37,7 @@ class JwstCalPredict:
         self,
         input_path=None,
         pid=None,
+        obs=None,
         model_path=None,
         models={},
         tx_file=None,
@@ -53,6 +55,7 @@ class JwstCalPredict:
     ):
         self.input_path = input_path
         self.pid = pid
+        self.obs = obs
         self.model_path = model_path
         self.models = models
         self.tx_file = tx_file
@@ -104,6 +107,55 @@ class JwstCalPredict:
             X = inputs[xcols]
             X = np.asarray(X)
         return X
+    
+    def verify_input_path(self):
+        """Verifies input path exists and checks if file or directory.
+        If input_path is a directory, check/set self.pid value
+        If self.obs is not None, validate format (1-3 numbers) and append to self.pid
+
+        If input_path is a file, any files matching first 9 chars and suffix 
+        (typically detector, e.g. "nrcb4_uncal.fits")
+        found in the same directory will be included automatically (assumes
+        standard naming convention of JWST input exposures).
+        - self.input_path is reset to top/parent directory
+        - self.pid is set to the first 9 characters
+        - self.sfx is set to the file suffix starting at the 2nd to last underscore
+        NB these variables ares passed through to the Scrubber and Scraper classes
+        to handle the actual searching on local disk for input files.
+        """
+        prefix = ""
+        if not os.path.exists(self.input_path):
+            self.log.error("No files/directories found at the specified path: ", self.input_path)
+            sys.exit(1)
+        if not (os.path.isdir(self.input_path)):
+            self.log.debug("Acquiring data from single input file")
+            fname = str(os.path.basename(self.input_path))
+            # reset input path to parent directory
+            self.input_path = os.path.dirname(self.input_path)
+            prefix = fname.split("_")[0][:10]
+            self.sfx = "_".join(fname.split("_")[-2])
+        if self.pid is None:
+            self.pid = prefix
+        else:
+            program_id = str(self.pid)
+            program_id = (
+                f"jw0{program_id}" if len(program_id) == 4 else f"jw{program_id}"
+            )
+            self.pid = program_id
+        if self.obs is not None:
+            try:
+                obsnum = str(int(self.obs))
+                if len(obsnum) < 3:
+                    obsnum = f"0{obsnum}" if len(obsnum) == 2 else f"00{obsnum}"
+                self.obs = obsnum
+            except TypeError:
+                self.log.warning("Could not set obs number: ", self.obs)
+                self.obs = ""
+            self.pid += self.obs
+
+        
+
+            
 
     def preprocess(self):
         self.input_data = dict(
@@ -119,14 +171,7 @@ class JwstCalPredict:
             TAC=None,
         )
         self.log.info("Preprocessing inputs...")
-        if self.pid is not None:
-            program_id = str(self.pid)
-            program_id = (
-                f"jw0{program_id}" if len(program_id) == 4 else f"jw{program_id}"
-            )
-            self.pid = program_id
-        else:
-            self.pid = ""
+        self.verify_input_path()
         scrubber = JwstCalScrubber(
             self.input_path,
             pfx=self.pid,
