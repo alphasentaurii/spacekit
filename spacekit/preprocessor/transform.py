@@ -169,12 +169,15 @@ class SkyTransformer:
         refpix.update(offset_stats)
         refpix.update(targ_offset_stats)
         # experimental
-        refpix["t_offset"] = self.pixel_sky_separation(
-            refpix["TARG_RA"], refpix["TARG_DEC"], pcoord, refpix["scale"]
-        )
-        refpix["gs_offset"] = self.pixel_sky_separation(
-            refpix["GS_RA"], refpix["GS_DEC"], pcoord, refpix["scale"]
-        )
+        try:
+            refpix["t_offset"] = self.pixel_sky_separation(
+                refpix["TARG_RA"], refpix["TARG_DEC"], pcoord, refpix["scale"]
+            )
+            refpix["gs_offset"] = self.pixel_sky_separation(
+                refpix["GS_RA"], refpix["GS_DEC"], pcoord, refpix["scale"]
+            )
+        except ValueError:
+            self.log.debug("TARG/GS RADEC vals missing or NaN - skipping additional offsets")
         return refpix
 
     def image_pixel_scales(self):
