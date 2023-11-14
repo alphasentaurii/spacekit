@@ -48,6 +48,7 @@ class JwstCalPredict:
             "err_offset",
             "sigma1_mean",
         ],
+        sfx="uncal.fits",
         **log_kws,
     ):
         self.input_path = input_path
@@ -57,6 +58,7 @@ class JwstCalPredict:
         self.tx_file = tx_file
         self.norm = norm
         self.norm_cols = norm_cols
+        self.sfx = sfx
         self.input_data = None  # dict of dataframes
         self.inputs = None  # dict of (normalized) arrays
         self.tx_data = None
@@ -128,7 +130,7 @@ class JwstCalPredict:
         scrubber = JwstCalScrubber(
             self.input_path,
             pfx=self.pid,
-            sfx="_uncal.fits",
+            sfx=self.sfx,
             encoding_pairs=KEYPAIR_DATA,
             **self.log_kws,
         )
