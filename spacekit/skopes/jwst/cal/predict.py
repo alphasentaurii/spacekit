@@ -86,7 +86,10 @@ class JwstCalPredict:
         norm_cols = NORM_COLS.get(order, self.norm_cols)
         if self.norm:
             self.log.info(f"Applying normalization [{order}]...")
-            tx_file = self.tx_file.split(".")[0] + f"-{order.lower()}.json"  # "{path}/tx_data-image.json"
+            if os.path.basename(self.tx_file) == "tx_data.json": # default
+                tx_file = self.tx_file.split(".")[0] + f"-{order.lower()}.json"  # "{path}/tx_data-image.json"
+            else:
+                tx_file = self.tx_file
             Px = PowerX(
                 inputs, cols=norm_cols, tx_file=tx_file, rename=None, join_data=1
             )
