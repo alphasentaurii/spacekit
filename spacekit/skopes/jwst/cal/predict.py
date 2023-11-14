@@ -111,7 +111,7 @@ class JwstCalPredict:
     def verify_input_path(self):
         """Verifies input path exists and checks if file or directory.
         If input_path is a directory, check/set self.pid value
-        If self.obs is not None, validate format (1-3 numbers) and append to self.pid
+        If self.obs is not None, validate format (1-3 digits) and append to self.pid
 
         If input_path is a file, any files matching first 9 chars and suffix 
         (typically detector, e.g. "nrcb4_uncal.fits")
@@ -119,8 +119,8 @@ class JwstCalPredict:
         standard naming convention of JWST input exposures).
         - self.input_path is reset to top/parent directory
         - self.pid is set to the first 9 characters
-        - self.sfx is set to the file suffix starting at the 2nd to last underscore
-        NB these variables ares passed through to the Scrubber and Scraper classes
+
+        NB these variables are passed through to the Scrubber and Scraper classes
         to handle the actual searching on local disk for input files.
         """
         prefix = ""
@@ -133,7 +133,6 @@ class JwstCalPredict:
             # reset input path to parent directory
             self.input_path = os.path.dirname(self.input_path)
             prefix = fname.split("_")[0][:10]
-            self.sfx = "_".join(fname.split("_")[-2])
         if self.pid is None:
             self.pid = prefix
         else:
@@ -142,17 +141,17 @@ class JwstCalPredict:
                 f"jw0{program_id}" if len(program_id) == 4 else f"jw{program_id}"
             )
             self.pid = program_id
-        if self.obs is not None:
-            try:
-                obsnum = str(int(self.obs))
-                if len(obsnum) < 3:
-                    obsnum = f"0{obsnum}" if len(obsnum) == 2 else f"00{obsnum}"
-                self.obs = obsnum
-            except TypeError:
-                self.log.warning("Could not set obs number: ", self.obs)
-                self.obs = ""
-            self.pid += self.obs
-            
+            # obs can only be used if PID is known
+            if self.obs is not None:
+                try:
+                    obsnum = str(int(self.obs))
+                    if len(obsnum) < 3:
+                        obsnum = f"0{obsnum}" if len(obsnum) == 2 else f"00{obsnum}"
+                    self.obs = obsnum
+                except TypeError:
+                    self.log.warning("Unrecognized OBS format. Must be 1-3 digits: ", self.obs)
+                    self.obs = ""
+                self.pid += self.obs
 
     def preprocess(self):
         self.input_data = dict(

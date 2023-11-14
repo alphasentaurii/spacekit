@@ -35,3 +35,22 @@ def test_jwst_cal_predict_handler(jwstcal_input_path):
     for k, v in jcal.predictions.items():
         instr = k.split("_")[1]
         assert EXPECTED[instr]["gbSize"] == v["gbSize"]
+
+#TODO
+@mark.jwst
+@mark.predict
+def test_jwst_cal_predict_input_single_file_path(jwstcal_file_path):
+    # jwstcal_file_path = "jw02732005001_02105_00001_mirimage_uncal.fits"
+    jcal = JwstCalPredict(input_path=jwstcal_file_path)
+    # should find only two files:
+    # "jw02732005001_02105_00001_mirimage_uncal.fits"
+    # "jw02732005001_02105_00002_mirimage_uncal.fits"
+
+#TODO
+@mark.jwst
+@mark.predict
+def test_jwst_cal_predict_pid_obs(jwstcal_input_path):
+    # jwstcal_file_path = "jw02732005001_02105_0001_mirimage_uncal.fits"
+    jcal1 = JwstCalPredict(input_path=jwstcal_input_path, pid=2732, obs=1)
+    jcal2 = JwstCalPredict(input_path=jwstcal_input_path, pid=2732, obs="005")
+    jcal3 = JwstCalPredict(input_path=jwstcal_input_path, pid=2732, obs="5")
