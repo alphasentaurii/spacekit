@@ -152,9 +152,6 @@ class JwstCalPredict:
                 self.log.warning("Could not set obs number: ", self.obs)
                 self.obs = ""
             self.pid += self.obs
-
-        
-
             
 
     def preprocess(self):
