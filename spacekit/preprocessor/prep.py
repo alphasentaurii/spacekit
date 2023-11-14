@@ -248,8 +248,8 @@ class JwstCalPrep(Prep):
             encode_targets=encode_targets,
         )
         self.target_data = data[self.y_target]
-        self.y_train = None
-        self.y_test = None
+        self.y_reg_train = None
+        self.y_reg_test = None
         self.y_bin_train = None
         self.y_bin_test = None
 
@@ -373,7 +373,7 @@ class JwstCalPrep(Prep):
     def prep_targets(self):
         """main calling function"""
         y_train, y_test = super().get_y_train_test(self.y_target)
-        self.y_train, self.y_test = y_tensors(
+        self.y_reg_train, self.y_reg_test = y_tensors(
             y_train.values, y_test.values, reshape=True
         )
 
