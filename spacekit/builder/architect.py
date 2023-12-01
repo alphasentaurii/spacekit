@@ -145,7 +145,7 @@ class Builder:
             self.log.error(err)
             sys.exit(1)
         model_src = "spacekit.builder.trained_networks"
-        archive_file = f"{arch}.zip"  # hst_cal.zip | jwt_cal.zip | svm_align.zip
+        archive_file = f"{arch}.zip"  # hst_cal.zip | jwst_cal.zip | svm_align.zip
         with importlib.resources.path(model_src, archive_file) as mod:
             self.model_path = mod
         if self.blueprint is None:

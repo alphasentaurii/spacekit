@@ -123,35 +123,36 @@ class JwstCalPredict:
         NB these variables are passed through to the Scrubber and Scraper classes
         to handle the actual searching on local disk for input files.
         """
-        prefix = ""
         if not os.path.exists(self.input_path):
-            self.log.error("No files/directories found at the specified path: ", self.input_path)
-            sys.exit(1)
-        if not (os.path.isdir(self.input_path)):
+            self.log.error(f"No files/directories found at the specified path: {self.input_path}")
+            raise FileNotFoundError
+
+        if self.pid is not None and os.path.isdir(self.input_path):
+            program_id = str(self.pid)
+            if not program_id.startswith("jw"):
+                program_id = (
+                    f"jw0{program_id}" if len(program_id) == 4 else f"jw{program_id}"
+                )
+                self.pid = program_id
+                # obs can only be used if PID is known
+                if self.obs is not None:
+                    try:
+                        obsnum = str(int(self.obs))
+                        if len(obsnum) < 3:
+                            obsnum = f"0{obsnum}" if len(obsnum) == 2 else f"00{obsnum}"
+                        self.obs = obsnum
+                    except ValueError:
+                        self.log.warning(f"Unrecognized format - 'obs' must be 1-3 digits. You entered: {self.obs}")
+                        self.obs = ""
+                    self.pid += self.obs
+        else:
             self.log.debug("Acquiring data from single input file")
             fname = str(os.path.basename(self.input_path))
             # reset input path to parent directory
             self.input_path = os.path.dirname(self.input_path)
             prefix = fname.split("_")[0][:10]
-        if self.pid is None:
             self.pid = prefix
-        else:
-            program_id = str(self.pid)
-            program_id = (
-                f"jw0{program_id}" if len(program_id) == 4 else f"jw{program_id}"
-            )
-            self.pid = program_id
-            # obs can only be used if PID is known
-            if self.obs is not None:
-                try:
-                    obsnum = str(int(self.obs))
-                    if len(obsnum) < 3:
-                        obsnum = f"0{obsnum}" if len(obsnum) == 2 else f"00{obsnum}"
-                    self.obs = obsnum
-                except TypeError:
-                    self.log.warning("Unrecognized OBS format. Must be 1-3 digits: ", self.obs)
-                    self.obs = ""
-                self.pid += self.obs
+
 
     def preprocess(self):
         self.input_data = dict(
@@ -194,12 +195,12 @@ class JwstCalPredict:
                 model_path=self.model_path, name="img3_reg", **self.log_kws
             ),
         )
-        self.spec3_reg = models.get(
-            "spec3_reg",
-            load_pretrained_model(
-                model_path=self.model_path, name="spec3_reg", **self.log_kws
-            ),
-        )
+        # self.spec3_reg = models.get(
+        #     "spec3_reg",
+        #     load_pretrained_model(
+        #         model_path=self.model_path, name="spec3_reg", **self.log_kws
+        #     ),
+        # )
         if self.model_path is None:
             self.model_path = os.path.dirname(self.img3_reg.model_path)
         if self.tx_file is None or not os.path.exists(self.tx_file):

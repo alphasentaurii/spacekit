@@ -60,8 +60,8 @@ class SkyTransformer:
         self.exp_key = kwargs.get("exp_type", "EXP_TYPE")
         self.ra_key = kwargs.get("ra", "CRVAL1")
         self.dec_key = kwargs.get("dec", "CRVAL2")
-        self.ra_key2 == "RA_REF" if self.ra_key == "CRVAL1" else "CRVAL1"
-        self.dec_key2 == "DEC_REF" if self.dec_key == "CRVAL2" else "CRVAL2"
+        self.ra_key2 = "RA_REF" if self.ra_key == "CRVAL1" else "CRVAL1"
+        self.dec_key2 = "DEC_REF" if self.dec_key == "CRVAL2" else "CRVAL2"
 
     def calculate_offsets(self, product_exp_headers):
         """Given key-value pairs of header info from a set of input exposures,
