@@ -50,7 +50,6 @@ def test_jwst_cal_predict_input_single_file_path(jwstcal_input_path):
     assert jcal.input_data['IMAGE'].nexposur.values[0] == 2
 
 
-
 @mark.jwst
 @mark.predict
 def test_jwst_cal_predict_pid_obs(jwstcal_input_path):
@@ -88,13 +87,6 @@ def test_jwst_cal_predict_fnf_exception():
         jcal.preprocess()
     except FileNotFoundError:
         assert True
-
-
-#TODO
-@mark.jwst
-@mark.predict
-def test_jwst_cal_predict_no_matching_exposures(jwstcal_input_path):
-    pass
 
 
 #TODO

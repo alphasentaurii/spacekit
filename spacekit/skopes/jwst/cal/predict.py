@@ -9,7 +9,6 @@ Program (PID) of exposures comes into pipeline
 7. run inference
 """
 import os
-import sys
 import argparse
 import numpy as np
 from spacekit.logger.log import SPACEKIT_LOG, Logger

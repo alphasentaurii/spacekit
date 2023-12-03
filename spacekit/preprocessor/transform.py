@@ -92,6 +92,14 @@ class SkyTransformer:
         for product, exp_headers in product_exp_headers.items():
             product_refpix[product] = self.get_pixel_offsets(exp_headers)
         return product_refpix
+    
+    def validate_fiducial(self, fiducial, exp):
+        (ra, dec) = fiducial
+        if isinstance(ra, float) and isinstance(dec, float):
+            return True
+        else:
+            self.log.warning(f"Invalid RA/DEC fiducial value ({ra}, {dec}) in {str(exp)}")
+            return False
 
     def get_pixel_offsets(self, exp_data):
         if self.count_exposures is True:
@@ -100,13 +108,21 @@ class SkyTransformer:
             refpix = dict()
         offsets, targ_offsets, detectors, bands = [], [], [], []
         targ_radec = None
+        bad_fiducials = {}
         for exp, data in exp_data.items():
+            fiducial = (data.get(self.ra_key, self.ra_key2), data.get(self.dec_key, self.dec_key2))
+            # only need to set once bc consisent across exposures
+            if targ_radec is None:
+                targ_radec = (data.get("TARG_RA", ''), data.get("TARG_DEC", ''))
+            # validate fiducials
+            if self.validate_fiducial(fiducial, exp) is False:
+                bad_fiducials[exp] = str(exp)
+                continue
             instr = data[self.instr_key]
             detector = data.get(self.detector_key, None)
             channel = data.get(self.channel_key, None)
             band = data.get(self.band_key, None)
             exp_type = data.get(self.exp_key, None)
-            fiducial = (data.get(self.ra_key, self.ra_key2), data.get(self.dec_key, self.dec_key2))
             scale = self.get_scale(
                 instr, channel=channel, detector=detector, exp_type=exp_type
             )
@@ -120,28 +136,35 @@ class SkyTransformer:
                     scale=scale,
                 )
             )
-            if targ_radec is None:
-                targ_radec = (data["TARG_RA"], data["TARG_DEC"])
             if detector is not None and detector.upper() not in detectors:
                 detectors.append(detector.upper())
             # MIRI MRS: determine bands used: short, long, shortmedium, shortmediumlong
             if band is not None and band.upper() not in bands:
                 bands.append(band.upper())
+        # Throw out any exposures with invalid data
+        for k in bad_fiducials.keys():
+            del exp_data[k]
+        # if all exposures were bad, return empty dict
+        if len(exp_data) < 1:
+            return {}
         # find fiducial (final product)
         footprints = [v["footprint"] for v in exp_data.values()]
         lon_fiducial, lat_fiducial = self.estimate_fiducial(footprints)
         refpix["fx_ra"], refpix["fy_dec"] = lon_fiducial, lat_fiducial
         # pixel sky sep offsets from estimated fiducial
         pcoord = SkyCoord(lon_fiducial, lat_fiducial, unit="deg")
-        tcoord = SkyCoord(targ_radec[0], targ_radec[1], unit="deg")
+        tcoord = None
+        if self.validate_fiducial(targ_radec) is True:
+            tcoord = SkyCoord(targ_radec[0], targ_radec[1], unit="deg")
         for exp, data in exp_data.items():
             (ra, dec) = data["fiducial"]
             pixel = self.pixel_sky_separation(ra, dec, pcoord, data["scale"])
-            targ_pixel = self.pixel_sky_separation(ra, dec, tcoord, data["scale"])
             exp_data[exp]["offset"] = pixel
-            exp_data[exp]["targ_offset"] = targ_pixel
             offsets.append(pixel)
-            targ_offsets.append(targ_pixel)
+            if tcoord:
+                targ_pixel = self.pixel_sky_separation(ra, dec, tcoord, data["scale"])
+                exp_data[exp]["targ_offset"] = targ_pixel
+                targ_offsets.append(targ_pixel)
         # fill in metadata for product using reference exposure (usually vals are equal across inputs)
         ref_exp = [
             k for k, v in exp_data.items() if v["offset"] == np.min(np.asarray(offsets))
@@ -165,9 +188,10 @@ class SkyTransformer:
             refpix["BAND"] = 'NONE'
         # offset statistics
         offset_stats = self.offset_statistics(offsets)
-        targ_offset_stats = self.offset_statistics(targ_offsets, pfx="targ_")
         refpix.update(offset_stats)
-        refpix.update(targ_offset_stats)
+        if targ_offsets:
+            targ_offset_stats = self.offset_statistics(targ_offsets, pfx="targ_")
+            refpix.update(targ_offset_stats)
         # experimental
         try:
             refpix["t_offset"] = self.pixel_sky_separation(
