@@ -89,8 +89,15 @@ def test_jwst_cal_predict_fnf_exception():
         assert True
 
 
-#TODO
 @mark.jwst
 @mark.predict
 def test_jwst_cal_predict_radec_nans_skip(jwstcal_input_path):
-    pass
+    jcal = JwstCalPredict(input_path=jwstcal_input_path, pid=1022)
+    jcal.preprocess()
+    # should ignore the bad exposure (NaN ra_ref val) but keep nrs2 exp
+    assert jcal.inputs['SPEC'].shape == (1, 18)
+    nexposur = jcal.input_data['SPEC'].loc['jw01022-o016-t1_nirspec_g140h-f100lp']['detector']
+    assert nexposur == 1
+    detector = jcal.input_data['SPEC'].loc['jw01022-o016-t1_nirspec_g140h-f100lp']['detector']
+    # nrs2 only (nrs1 exposure was removed)
+    assert detector == 30

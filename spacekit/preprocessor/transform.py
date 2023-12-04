@@ -98,7 +98,11 @@ class SkyTransformer:
         if isinstance(ra, float) and isinstance(dec, float):
             return True
         else:
-            self.log.warning(f"Invalid RA/DEC fiducial value ({ra}, {dec}) in {str(exp)}")
+            warning_message = f"Invalid RA/DEC fiducial value ({ra}, {dec}) in {str(exp)}"
+            if exp == "TARG_RA/TARG_DEC":
+                self.log.debug(warning_message)
+            else:
+                self.log.warning(warning_message)
             return False
 
     def get_pixel_offsets(self, exp_data):
@@ -144,6 +148,7 @@ class SkyTransformer:
         # Throw out any exposures with invalid data
         for k in bad_fiducials.keys():
             del exp_data[k]
+            refpix['NEXPOSUR'] -= 1
         # if all exposures were bad, return empty dict
         if len(exp_data) < 1:
             return {}
@@ -154,7 +159,7 @@ class SkyTransformer:
         # pixel sky sep offsets from estimated fiducial
         pcoord = SkyCoord(lon_fiducial, lat_fiducial, unit="deg")
         tcoord = None
-        if self.validate_fiducial(targ_radec) is True:
+        if self.validate_fiducial(targ_radec, 'TARG_RA/TARG_DEC') is True:
             tcoord = SkyCoord(targ_radec[0], targ_radec[1], unit="deg")
         for exp, data in exp_data.items():
             (ra, dec) = data["fiducial"]
