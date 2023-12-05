@@ -763,9 +763,14 @@ class JwstCalScrubber(Scrubber):
         else:
             self.tac_products[p] = {k: v}
 
-    def get_level3_products(self):
+    def get_level3_products(self, trg_wildcard=False):
         """Determines potential L3 products based on obs, filters, detectors, etc
         Then groups input exposures by target+obs num+optelem(+fxd_slit,+subarray)
+
+        Parameters
+        ----------
+        trg_wildcard : bool
+            set L3 product name's target number to 't*', by default False
         """
         l3_types = self.level3_types()
         targetnames = list(set([v["TARGNAME"] for v in self.exp_headers.values()]))
@@ -780,7 +785,7 @@ class JwstCalScrubber(Scrubber):
         for k, v in self.exp_headers.items():
             exp_type = v["EXP_TYPE"]
             if exp_type in l3_types:
-                tnum = targs.get(v["TARGNAME"])
+                tnum = targs.get(v["TARGNAME"]) if trg_wildcard is False else 't*'
                 if exp_type in coron_ami or v["TSOVISIT"] in [True, "t", "T", "True"]:
                     self.make_tac_product_name(k, v, tnum)
                 elif v["INSTRUME"] == "FGS":
