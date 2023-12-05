@@ -684,11 +684,11 @@ class JwstCalScrubber(Scrubber):
             number assigned to each unique target name within a program
         """
         if v["PUPIL"] == "CLEAR":
-            p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}-{tnum}_{v['INSTRUME']}_{v['PUPIL']}-{v['FILTER']}"
+            p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{v['PUPIL']}-{v['FILTER']}"
         elif v["PUPIL"] not in ["NaN", "N/A", "NONE"]:
-            p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}-{tnum}_{v['INSTRUME']}_{v['FILTER']}-{v['PUPIL']}"
+            p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{v['FILTER']}-{v['PUPIL']}"
         else:
-            p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}-{tnum}_{v['INSTRUME']}_{v['FILTER']}"
+            p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{v['FILTER']}"
         p = p.lower()
         del v["NEXPOSUR"]
         if p in self.img_products:
@@ -736,7 +736,7 @@ class JwstCalScrubber(Scrubber):
             optelem = "" # miri mrs
         slit = f"-{v['FXD_SLIT']}" if v["FXD_SLIT"] not in ["NaN", "N/A", "NONE"] else ""
         subarray = f"-{v['SUBARRAY']}" if v["SUBARRAY"] not in ["NaN", "N/A", "NONE", "FULL"] else ""
-        p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}-{tnum}_{v['INSTRUME']}_{optelem}{slit}{subarray}"
+        p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{slit}{subarray}"
         p = p.lower()
         del v["NEXPOSUR"]
         if p in self.spec_products:
@@ -745,7 +745,7 @@ class JwstCalScrubber(Scrubber):
             self.spec_products[p] = {k: v}
 
     def make_fgs_product_name(self, k, v, tnum):
-        p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}-{tnum}_{v['INSTRUME']}_clear"
+        p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_clear"
         p = p.lower()
         if p in self.fgs_products:
             self.fgs_products[p][k] = v
@@ -756,7 +756,7 @@ class JwstCalScrubber(Scrubber):
         fltr = f"_{v['FILTER']}"
         subarray = f"-{v['SUBARRAY']}"
         pupil = f"-{v['PUPIL']}" if v["PUPIL"] not in ["NaN", "N/A", "NONE"] else ""
-        p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}-{tnum}_{v['INSTRUME']}{fltr}{pupil}{subarray}"
+        p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}{fltr}{pupil}{subarray}"
         p = p.lower()
         if p in self.tac_products:
             self.tac_products[p][k] = v
