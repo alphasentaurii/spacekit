@@ -847,9 +847,6 @@ class FitsScraper(FileScraper):
                 continue
         return exp_headers
 
-
-
-
     def find_drz_paths(self, dname_col="dataset", drzimg_col="imgname"):
         """Looks for SVM input files based on information contained in the ``self.df`` attribute.
         Input paths for files are constructed using the ``dname_col`` and ``drzimg_col`` along with

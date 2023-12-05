@@ -530,6 +530,7 @@ class JwstCalScrubber(Scrubber):
         dropnans=False,
         save_raw=True,
         encoding_pairs=None,
+        mode='fits',
         **log_kws,
     ):
         """Initializes a JwstCalScrubber class object.
@@ -570,6 +571,7 @@ class JwstCalScrubber(Scrubber):
         )
         self.xcols = self.set_col_order()
         self.encoding_pairs = encoding_pairs
+        self.mode = mode
         self.scrape_inputs()
         self.get_level3_products()
         self.pixel_offsets()
@@ -650,7 +652,10 @@ class JwstCalScrubber(Scrubber):
             self.input_path, data=self.df, pfx=self.pfx, sfx=self.sfx
         )
         self.fpaths = self.scraper.fpaths
-        self.exp_headers = self.scraper.scrape_fits()
+        if self.mode == 'df':
+            self.exp_headers = self.scraper.scrape_dataframe()
+        else:
+            self.exp_headers = self.scraper.scrape_fits()
 
     def pixel_offsets(self):
         """Generate the pixel offset between exposure reference pixels and the estimated L3 fiducial.
