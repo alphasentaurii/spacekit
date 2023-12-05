@@ -827,6 +827,28 @@ class FitsScraper(FileScraper):
                 del exp_headers[name]
                 continue
         return exp_headers
+    
+    def scrape_dataframe(self, dnames=None, dname_col="dname"):
+        if dnames is None:
+            dnames = list(self.df[dname_col])
+        exp_headers = {}
+        for name in dnames:
+            try:
+                data = self.df.loc[name]
+                exp_headers[name] = dict()
+                if self.genkeys:
+                    for g in self.genkeys:
+                        exp_headers[name][g] = data[g] if g in self.df.columns else "NaN"
+                if self.scikeys:
+                    for s in self.scikeys:
+                        exp_headers[name][s] = data[s] if s in self.df.columns else "NaN"
+            except Exception:
+                del exp_headers[name]
+                continue
+        return exp_headers
+
+
+
 
     def find_drz_paths(self, dname_col="dataset", drzimg_col="imgname"):
         """Looks for SVM input files based on information contained in the ``self.df`` attribute.
