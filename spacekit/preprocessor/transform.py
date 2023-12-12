@@ -148,7 +148,8 @@ class SkyTransformer:
         # Throw out any exposures with invalid data
         for k in bad_fiducials.keys():
             del exp_data[k]
-            refpix['NEXPOSUR'] -= 1
+            if 'NEXPOSUR' in refpix:
+                refpix['NEXPOSUR'] -= 1
         # if all exposures were bad, return empty dict
         if len(exp_data) < 1:
             return {}
