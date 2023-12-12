@@ -194,6 +194,7 @@ class JwstCalPredict:
                 model_path=self.model_path, name="img3_reg", **self.log_kws
             ),
         )
+        # TODO
         # self.spec3_reg = models.get(
         #     "spec3_reg",
         #     load_pretrained_model(
@@ -203,6 +204,8 @@ class JwstCalPredict:
         if self.model_path is None:
             self.model_path = os.path.dirname(self.img3_reg.model_path)
         if self.tx_file is None or not os.path.exists(self.tx_file):
+            # TODO
+            # self.img3_reg.find_tx_file(name="tx_data-image.json")
             self.img3_reg.find_tx_file(name="tx_data.json")
             self.tx_file = self.img3_reg.tx_file
 

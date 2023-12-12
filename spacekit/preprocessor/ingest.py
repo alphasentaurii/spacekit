@@ -3,12 +3,14 @@ import sys
 import glob
 import shutil
 import pandas as pd
-
+from spacekit.logger.log import Logger
 from spacekit.extractor.scrape import JsonScraper
-from spacekit.preprocessor.scrub import HstSvmScrubber
+from spacekit.preprocessor.scrub import HstSvmScrubber, JwstCalScrubber
 from spacekit.generator.draw import DrawMosaics
-
 from spacekit.analyzer.track import timer, record_metrics
+from spacekit.skopes.jwst.cal.config import KEYPAIR_DATA
+from spacekit.extractor.radio import JwstCalRadio
+
 
 
 class SvmAlignmentIngest:
@@ -177,3 +179,98 @@ class SvmAlignmentIngest:
                 print(
                     f"{len(df)} in DF does not match {len(grp)} in filegroup. Skipping cleanup"
                 )
+
+
+
+
+class JwstCalIngest:
+    def __init__(self, input_path=None, pfx="", sfx=".csv", name="JwstCalIngest", **log_kws):
+        self.input_path = input_path
+        self.pfx = pfx
+        self.sfx = sfx
+        self.files = self.read_files()
+        self.index = "Dataset"
+        self.df = None
+        self.__name__ = name
+        self.log = Logger(self.__name__, **log_kws).spacekit_logger()
+
+    def extract_pid(self, x):
+        if not isinstance(x, str):
+            return x
+        pid = x[2:7]
+        if pid[0] == '0':
+            pid = pid[1:]
+        return int(pid)
+
+    def convert_to_float(self, x):
+        if x != "NONE":
+            return float(x)
+    
+    def read_files(self):
+        if self.input_path is None:
+            self.input_path = os.getcwd()
+        self.files = glob.glob(f"{self.input_path}/{self.pfx}*{self.sfx}")
+        # ['2023-11-23_327.csv',
+        # '2023-11-28_332.csv',
+        # '2023-11-24_328.csv',
+        # '2023-11-30_334.csv',
+        # '2023-11-29_333.csv',
+        # '2023-11-25_329.csv',
+        # '2023-11-26_330.csv',
+        # '2023-11-27_331.csv']
+
+    def ingest_data(self):
+        for f in self.files:
+            df = pd.read_csv(f, index_col=self.index)
+            if self.df is None:
+                self.df = df
+            else:
+                self.df = pd.concat([self.df, df])
+    
+    def scrub_exposures(self):
+        self.df['dname'] = self.df.index
+        self.df['pid'] = self.df['dname'].apply(lambda x: self.extract_pid(x))
+        float_cols = [
+            'CRVAL1',
+            'CRVAL2',
+            'RA_REF',
+            'DEC_REF',
+            'GS_RA',
+            'GS_DEC',
+            'TARG_RA',
+            'TARG_DEC'
+        ]
+        for col in float_cols:
+            self.df[col] = self.df[col].apply(lambda x: self.convert_to_float(x))
+        radio = JwstCalRadio()
+        # IMAGE DATA
+        IMAGE_EXPTYPES = ['NRC_IMAGE', 'MIR_IMAGE', 'NIS_IMAGE']
+        # nrcimg_l1 = self.df.loc[(self.df.DagNodeName=='LEVEL_1')&(self.df.EXP_TYPE=='NRC_IMAGE')]
+        # mirimg_l1 = self.df.loc[(self.df.DagNodeName=="LEVEL_1")&(self.df.EXP_TYPE=="MIR_IMAGE")]
+        # nisimg_l1 =  self.df.loc[(self.df.DagNodeName=="LEVEL_1")&(self.df.EXP_TYPE=="NIS_IMAGE")]
+        for exp_type in IMAGE_EXPTYPES:
+            data = self.df.loc[(self.df.DagNodeName=='LEVEL_1')&(self.df.EXP_TYPE==exp_type)]
+            scrubber = JwstCalScrubber(
+                self.input_path,
+                data=data,
+                encoding_pairs=KEYPAIR_DATA,
+                mode='df'
+            )
+            self.df = radio.match_asn_filename(self.df, scrubber.img_products)
+        product_list = list(
+            self.df.loc[(
+                self.df['product'] != "NONE"
+                ) & (
+                    self.df['product'].isna() == False
+                )]['product'].unique()
+        )
+        import re
+        pattern = re.compile(r"jw[0-9]{5}-o[0-9]{3}_t[0-9]{3}_*") 
+        l3_prods = []
+        for p in product_list:
+            m = re.match(pattern, p)
+            if m:
+                l3_prods.append(p)
+
+        # nircam = self.df.loc[(df['product'].isin(l3_prods)) & (df['INSTRUME']=="NIRCAM") & (df.DagNodeName!='LEVEL_2A')]
+        # mirimage =  df.loc[(df['product'].isin(l3_prods))& (df.DagNodeName!='LEVEL_2A')]
