@@ -713,6 +713,8 @@ class JwstCalScrubber(Scrubber):
         """
         if v["EXP_TYPE"] == "MIR_LRS-SLITLESS" and v["TSOVISIT"] is False:
             return
+        if v['EXP_TYPE'] in ["NRS_MSASPEC", "NRC_WFSS"]:
+            tnum = "s00001" if self.mode == "fits" else "s*"
         pupil = f"{v['PUPIL']}" if v["PUPIL"] not in ["NaN", "N/A", "NONE"] else ""
         fltr = f"{v['FILTER']}" if v["FILTER"] not in ["NaN", "N/A", "NONE"] else ""
         grating = (
@@ -721,8 +723,12 @@ class JwstCalScrubber(Scrubber):
         if fltr or grating:
             if not grating:
                 if pupil:
-                    # NIRISS: jw01089-o001_{source_id}_niriss_f140m-gr150r
-                    optelem = f"{pupil}-{fltr}"
+                    if v["EXP_TYPE"] == "NRC_WFSS":
+                        # jw02078-o111_s00955_nircam_f356w-grismr
+                        optelem = f"{fltr}-{pupil}"
+                    else:
+                        # NIRISS: jw01089-o001_{source_id}_niriss_f140m-gr150r
+                        optelem = f"{pupil}-{fltr}"
                 else:
                     optelem = fltr # miri, niriss
             elif not fltr:
@@ -736,6 +742,7 @@ class JwstCalScrubber(Scrubber):
             optelem = "" # miri mrs
         slit = f"-{v['FXD_SLIT']}" if v["FXD_SLIT"] not in ["NaN", "N/A", "NONE"] else ""
         subarray = f"-{v['SUBARRAY']}" if v["SUBARRAY"] not in ["NaN", "N/A", "NONE", "FULL"] else ""
+        
         p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{slit}{subarray}"
         p = p.lower()
         del v["NEXPOSUR"]
@@ -767,9 +774,9 @@ class JwstCalScrubber(Scrubber):
         """Determines potential L3 products based on obs, filters, detectors, etc
         Then groups input exposures by target+obs num+optelem(+fxd_slit,+subarray)
         """
-        trg_wildcard = False if self.mode == "fits" else True
         l3_types = self.level3_types()
-        targetnames = list(set([v["TARGNAME"] for v in self.exp_headers.values()]))
+        targetnames = list(set([v.get("TARGNAME", "NONE") for v in self.exp_headers.values()]))
+        targetnames = [t for t in targetnames if isinstance(t, str) and t != "NONE"]
         tnums = [f"t{i+1}" for i, _ in enumerate(targetnames)]
         targs = dict(zip(targetnames, tnums))
         self.img_products = dict()
@@ -781,7 +788,9 @@ class JwstCalScrubber(Scrubber):
         for k, v in self.exp_headers.items():
             exp_type = v["EXP_TYPE"]
             if exp_type in l3_types:
-                tnum = targs.get(v["TARGNAME"]) if trg_wildcard is False else 't*'
+                tnum = targs.get(v["TARGNAME"], "NONE") 
+                if tnum == "NONE" or isinstance(tnum, float):
+                    tnum = "s00001" if self.mode == "fits" else "s*"
                 if exp_type in coron_ami or v["TSOVISIT"] in [True, "t", "T", "True"]:
                     self.make_tac_product_name(k, v, tnum)
                 elif v["INSTRUME"] == "FGS":

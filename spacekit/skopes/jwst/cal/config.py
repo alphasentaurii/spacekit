@@ -396,6 +396,7 @@ KEYPAIR_DATA = {
         "SUBSTRIP96": 6,
         "SUBTAAMI": 6,
         "SUBTASOSS": 6,
+        "SUB400X256ALWB": 6,
         "WFSS128C": 7,
         "WFSS128R": 7,
         "WFSS64C": 7,

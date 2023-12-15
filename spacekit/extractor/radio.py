@@ -444,158 +444,103 @@ class JwstCalRadio(Radio):
 
     def __init__(self, **log_kws):
         super().__init__(name="JwstCalRadio", **log_kws)
-
-    def get_mast_kwargs(self, product, level, asntype, limit=0):
-        """get fits extension suffices according to asn type and cal level 
-        MIR_MRS / IFU: l3 = S3D, l1,l2=uncal
-        FIXEDSLIT / LRS-FIXEDSLIT / LRS-SLITLESS: l3=S2D, l1,l2=X1D (uncal?)
-        SOSS / WFSS : l3 = C1D, l1,l2 = UNCAL
-        fallbacks: 'X1D', 'UNCAL'
-        """
-        if asntype == 'SPEC3':
-            sub = ['S3D','S2D','C1D'] if level == 3 else 'UNCAL'
-            if level == 3 and limit == 1:
-                if 'nircam' in product.split('_'):
-                    return dict(productSubGroupDescription=sub, prvversion='1.11.4')
-                else:
-                    return dict(productSubGroupDescription=sub, prvversion='1.10.1')
-            else:
-                return dict(productSubGroupDescription=sub)
-        elif asntype == 'WFS-IMAGE3':
-            sub = 'WFSCMB' if level == 3 else 'CAL'
-        elif asntype == "IMAGE3":
-            sub = 'I2D' if level == 3 else 'CAL'
-        else: # tso, ami, coron
-            sub = ['S3D','S2D','I2D','C1D'] if level == 3 else 'CAL'
-        return dict(productSubGroupDescription=sub)
-
-    def match_asn_filename(self, df, product_dict):
-        for k, v in product_dict.items():
-            obs = Observations.query_criteria(obs_id=k)
-            if len(obs) < 1:
-                continue
-            try:
-                targname = obs['target_name'][0]
-            except Exception:
-                targname = None
-            data_prod = Observations.get_product_list(obs['obsid'])
-            mast_kwargs = dict(
+        self.product_matches = dict()
+        self.asn_kwargs = dict(
                 productSubGroupDescription=['ASN'],
                 productGroupDescription=['Minimum Recommended Products']
-            )
-            filt_prod = Observations.filter_products(data_prod, **mast_kwargs)
-            if len(filt_prod) == 1:
-                asn_file = filt_prod['productFilename'][0]
-                product = filt_prod['obs_id'][0]
-                asn_name = asn_file.replace('_asn.json', '')
-                df.loc[df.dname == asn_name, 'product'] = product
-                exposures = list(v.keys())
-                for e in exposures:
-                    df.loc[e, 'product'] = product
-            if targname is not None:
-                df.loc[df['product'] == product, 'TARGNAME'] = targname
-        return df
+        )
+        self.errs = {}
 
-    def scrape_refpix(self, prod_list, asntype="IMAGE3", basepath="./science", cleanup=False):
-        os.makedirs(basepath, exist_ok=True)
-        dpath = os.path.join(basepath, "mastDownload/JWST")
-        mkeys = ['CRVAL1','CRVAL2','RA_REF','DEC_REF']
-        pkeys = ['RA_REF','DEC_REF','CRVAL1','CRVAL2']
-        refpix = {}
-        errs = {}
-        
-        for product in prod_list:
-            limit = 0
-            parent_obsid = None
-            miri_ifu = False
-            if asntype != "IMAGE3":
-                prod = product.split("_{source_id}_")
-                if len(prod) > 1:
-                    limit = 1
-                    obsid = '_s00001_'.join(prod)
-                    obsid_wild = '*'.join(prod)
+    def match_asn_filename(self, input_data):
+        self.match_image_asn(input_data)
+        self.match_spec_asn(input_data)
+        self.match_tac_asn(input_data)
+        return self.product_matches
+
+    def match_image_asn(self, input_data):
+        if input_data["IMAGE"] is None:
+            return
+        image_products = list(input_data["IMAGE"].index)
+        self.log.info(f"Querying MAST for {len(image_products)} L3 image products")
+        self.product_matches["IMAGE"] = dict()
+        for k in image_products:
+            try:
+                obs = Observations.query_criteria(obs_id=k)
+                if len(obs) < 1:
+                    self.errs[k] = "No results found on MAST"
+                    continue
+                try:
+                    targname = obs['target_name'][0]
+                except Exception:
+                    targname = None
+                data_prod = Observations.get_product_list(obs['obsid'])
+                filt_prod = Observations.filter_products(data_prod, **self.asn_kwargs)
+                if len(filt_prod) == 1:
+                    product = filt_prod['obs_id'][0]
+                    asn_file = filt_prod['productFilename'][0]
+                    asn_name = asn_file.replace('_asn.json', '')
+                    self.product_matches["IMAGE"][k] = dict(pname=product, asn=asn_name, targname=targname)
+                elif len(filt_prod) > 1:
+                    self.errs[k] = "Multiple filt_prod results in MAST"
+                    self.log.warning(f"MAST returned more than 1 result for {k}")
                 else:
-                    obsid = product+"*"
-                    if product.split('_')[-1] == 'miri':
-                        obsid = product + "_ch*"
-                        miri_ifu = True
+                    self.errs[k] = "No results found in MAST"
+                    self.log.warning(f"No results found for {k}")
+                    
+            except Exception as e:
+                self.errs[k] = str(e)
+        nresults = len(self.product_matches["IMAGE"])
+        self.log.info(f"{nresults} of {len(image_products)} matched.")
+
+    def match_spec_asn(self, input_data):
+        if input_data["SPEC"] is None:
+            return
+        spec_products = list(input_data["SPEC"].index)
+        self.log.info(f"Querying MAST for {len(spec_products)} L3 spec products")
+        self.product_matches["SPEC"] = dict()
+        for k in spec_products:
+            if k.split('_')[-2] == 'miri': # miri ifu
+                obsid = k + "ch*"
             else:
-                obsid = product
+                obsid = k+"*"
             try:
                 obs = Observations.query_criteria(obs_id=obsid)
-                if len(obs) == 0 and limit == 1:
-                    # rare cases sources start above s00001
-                    obs = Observations.query_criteria(obs_id=obsid_wild)
-                    # for these we'll use the wildcard then limit to first result
-                    obsid = obs[0]['obs_id']
-                    obs = Observations.query_criteria(obs_id=obsid)
-                if len(obs) > 0:
-                    refpix[product] = dict()
-                    refpix[product]['obs_id'] = obs['obs_id'][0]
-                    refpix[product]['ra'] = obs['s_ra'][0]
-                    refpix[product]['dec'] = obs['s_dec'][0]
-                    refpix[product]['targname'] = obs['target_name'][0]
-                    refpix[product]['pixel_scale'] = get_pixel_scale(df, product)
-                    
-                    if obs['dataRights'][0] == 'PUBLIC':
-                        data_prod = Observations.get_product_list(obs['obsid'])
-                        for level in [3,2]:
-                            mastkwargs = self.get_mast_kwargs(product, level, asntype, limit=limit)
-                            filt_prod = Observations.filter_products(data_prod, **mastkwargs)
-                            if len(filt_prod) == 0 and 'prvversion' in mastkwargs:
-                                # fallback
-                                sub = mastkwargs.get('productSubGroupDescription')
-                                filt_prod = Observations.filter_products(data_prod, productSubGroupDescription=sub)
-                            if len(filt_prod) > 0:
-                                if limit > 0:
-                                    if level == 3:
-                                        if filt_prod['productSubGroupDescription'][0] == 'C1D':
-                                            filt_prod = Observations.filter_products(data_prod, productSubGroupDescription=['CAL'])
-                                        filt_prod = filt_prod[0]
-                                        parent_obsid = filt_prod['parent_obsid']
-                                    else:
-                                        if parent_obsid:
-                                            filt_prod2 = Observations.filter_products(filt_prod, parent_obsid=parent_obsid)
-                                            if len(filt_prod2) > 0:
-                                                filt_prod = filt_prod2
-                                        if filt_prod[0]['obs_id'] == obsid:
-                                            filt_prod = filt_prod[1:]
-                                        
-                                mrp = True if level == 3 else False
-                                try:
-                                    Observations.download_products(filt_prod, mrp_only=mrp, download_dir=basepath)
-                                except Exception as e:
-                                    errs[product] = e
-                                if level == 2:
-                                    cals = list(set(filt_prod['productFilename']))
-                        
-                        fpath = glob.glob(f"{dpath}/{obsid}/*.fits")
-                        if len(fpath) > 0:
-                            p_header = scrape_sciheader(fpath, keys=pkeys)
-                            #refpix[product]["ra_dec_ref"] = p_header[product] #image3
-                            name = refpix[product]['obs_id']
-                            refpix[product]["ra_dec_ref"] = p_header[name] # spec3
-                            # mast miri ifu has 4 sep L3 products (one for each channel) and crvals are unique for each one
-                            # scrape these as a backup - for now only using one for the offset
-                            if miri_ifu is True:
-                                refpix[product]["ifu_data"] = p_header
-
-                        calfiles = [glob.glob(f"{dpath}/*/{cal}") for cal in cals]
-                        calfiles = [c[0] for c in calfiles if len(c) > 0]
-                        # refpix[product]["member_vals"] = scrape_sciheader(calfiles)
-                        refpix[product]["member_vals"] = scrape_fits_headers(calfiles)
-            
-                        if cleanup is True:
-                            try:
-                                cleandirs = glob.glob(f"{dpath}/*")
-                                for d in cleandirs:
-                                    shutil.rmtree(d)
-                            except Exception as e:
-                                print(e)
+                if len(obs) == 0:
+                    if k.split("s*") > 1:
+                        obsid_wild = '*'.join(k.split("s*")) # s00001
                     else:
-                        errs[product] = obs['dataRights'][0]
+                        obsid_wild = '*'.join(k.split("t*")) # s00001
+                    obs = Observations.query_criteria(obs_id=obsid_wild)
+                    if len(obs) == 0:
+                        self.log.warning(f"No results found for {k}")
+                        self.errs[k] = "No results found in MAST"
+                        continue
+                if len(obs) > 1:
+                    source_ids = sorted([o['obs_id'] for o in obs])
+                    # limit to first result
+                    obsid = source_ids[0]
+                    obs = Observations.query_criteria(obs_id=obsid)
+
+                try:
+                    targname = obs['target_name'][0]
+                except Exception:
+                    targname = None
+                data_prod = Observations.get_product_list(obs['obsid'])
+                filt_prod = Observations.filter_products(data_prod, **self.asn_kwargs)
+                if len(filt_prod) > 0:
+                    product = filt_prod['obs_id'][0]
+                    asn_file = filt_prod['productFilename'][0]
+                    asn_name = asn_file.replace('_asn.json', '')
+                    self.product_matches["SPEC"][k] = dict(pname=product, asn=asn_name, targname=targname)
                 else:
-                    errs[product] = 'NOT FOUND'
+                    self.log.warning(f"No results found for {k}")
+                    self.errs[k] = "No results found in MAST"
             except Exception as e:
-                errs[product] = str(e)
-        return refpix, errs
+                self.errs[k] = str(e)
+
+    def match_tac_asn(self, input_data):
+        if input_data["TAC"] is None:
+            return
+        tac_products = list(input_data["TAC"].index)
+        self.log.info(f"Querying MAST for {len(tac_products)} L3 tac products")
+        self.product_matches["TAC"] = dict()

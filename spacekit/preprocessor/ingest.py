@@ -188,9 +188,12 @@ class JwstCalIngest:
         self.input_path = input_path
         self.pfx = pfx
         self.sfx = sfx
+        self.exp_types = ["IMAGE", "SPEC", "TAC", "FGS"]
         self.files = self.read_files()
         self.index = "Dataset"
         self.df = None
+        self.input_data = None
+        self.product_matches = None
         self.__name__ = name
         self.log = Logger(self.__name__, **log_kws).spacekit_logger()
 
@@ -209,15 +212,7 @@ class JwstCalIngest:
     def read_files(self):
         if self.input_path is None:
             self.input_path = os.getcwd()
-        self.files = glob.glob(f"{self.input_path}/{self.pfx}*{self.sfx}")
-        # ['2023-11-23_327.csv',
-        # '2023-11-28_332.csv',
-        # '2023-11-24_328.csv',
-        # '2023-11-30_334.csv',
-        # '2023-11-29_333.csv',
-        # '2023-11-25_329.csv',
-        # '2023-11-26_330.csv',
-        # '2023-11-27_331.csv']
+        self.files = sorted(glob.glob(f"{self.input_path}/{self.pfx}*{self.sfx}"))
 
     def ingest_data(self):
         for f in self.files:
@@ -225,11 +220,12 @@ class JwstCalIngest:
             if self.df is None:
                 self.df = df
             else:
-                self.df = pd.concat([self.df, df])
+                self.df = pd.concat([self.df, df], axis=0)
     
     def scrub_exposures(self):
         self.df['dname'] = self.df.index
         self.df['pid'] = self.df['dname'].apply(lambda x: self.extract_pid(x))
+        self.df.rename({'TARGNAME':'targname'}, axis=1, inplace=True)
         float_cols = [
             'CRVAL1',
             'CRVAL2',
@@ -243,34 +239,60 @@ class JwstCalIngest:
         for col in float_cols:
             self.df[col] = self.df[col].apply(lambda x: self.convert_to_float(x))
         radio = JwstCalRadio()
-        # IMAGE DATA
-        IMAGE_EXPTYPES = ['NRC_IMAGE', 'MIR_IMAGE', 'NIS_IMAGE']
-        # nrcimg_l1 = self.df.loc[(self.df.DagNodeName=='LEVEL_1')&(self.df.EXP_TYPE=='NRC_IMAGE')]
-        # mirimg_l1 = self.df.loc[(self.df.DagNodeName=="LEVEL_1")&(self.df.EXP_TYPE=="MIR_IMAGE")]
-        # nisimg_l1 =  self.df.loc[(self.df.DagNodeName=="LEVEL_1")&(self.df.EXP_TYPE=="NIS_IMAGE")]
-        for exp_type in IMAGE_EXPTYPES:
-            data = self.df.loc[(self.df.DagNodeName=='LEVEL_1')&(self.df.EXP_TYPE==exp_type)]
-            scrubber = JwstCalScrubber(
+        scrubber = JwstCalScrubber(
                 self.input_path,
-                data=data,
+                data=self.df.loc[self.df['DagNodeName'] == "LEVEL_1"],
                 encoding_pairs=KEYPAIR_DATA,
                 mode='df'
             )
-            self.df = radio.match_asn_filename(self.df, scrubber.img_products)
-        product_list = list(
-            self.df.loc[(
-                self.df['product'] != "NONE"
-                ) & (
-                    self.df['product'].isna() == False
-                )]['product'].unique()
-        )
-        import re
-        pattern = re.compile(r"jw[0-9]{5}-o[0-9]{3}_t[0-9]{3}_*") 
-        l3_prods = []
-        for p in product_list:
-            m = re.match(pattern, p)
-            if m:
-                l3_prods.append(p)
+        self.input_data = scrubber.input_data()
+        for exp_type in self.exp_types:
+            inputs = scrubber.scrub_inputs(exp_type=exp_type)
+            if inputs is not None:
+                inputs['dname'] = inputs.index
+                self.input_data[exp_type] = inputs
+        self.product_matches = radio.match_asn_filename(self.input_data)
+        for products in [
+            scrubber.img_products,
+            scrubber.spec_products,
+            scrubber.tac_products
+            ]:
+            self.match_products(products)
+        self.drop_incomplete_data()
+        self.convert_imagesize_units()
 
-        # nircam = self.df.loc[(df['product'].isin(l3_prods)) & (df['INSTRUME']=="NIRCAM") & (df.DagNodeName!='LEVEL_2A')]
-        # mirimage =  df.loc[(df['product'].isin(l3_prods))& (df.DagNodeName!='LEVEL_2A')]
+    def match_products(self, products, exp_type="IMAGE"):
+        for k, v in products.items():
+            info = self.product_matches[exp_type].get(k, None)
+            if info:
+                try:
+                    imagesize = self.df.loc[self.df.dname == info['asn']]['ImageSize'][0]
+                except IndexError:
+                    imagesize = None # no L3 product
+                for key, value in info.items():
+                    self.input_data[exp_type].loc[k, key] = value
+                    for e in list(v.keys()):
+                        self.df.loc[e, key] = value
+
+                if imagesize is not None:
+                    self.df.loc[info['asn'], 'pname'] = info['pname']
+                    self.df.loc[info['asn'], 'targname'] = info['targname']
+                    self.input_data[exp_type].loc[k, 'imagesize'] = imagesize
+
+    def drop_incomplete_data(self):
+        for exp_type in self.exp_types:
+            missing = self.input_data[exp_type].loc[self.input_data[exp_type]['imagesize'].isna()==True].index
+            self.log.info(f"Dropping {len(missing)} incomplete inputs for {exp_type}")
+            self.input_data[exp_type].drop(missing, axis=0, inplace=True)
+
+    def convert_imagesize_units(self):
+        for exp_type in self.exp_types:
+            self.input_data[exp_type]['imgsize_gb'] = self.input_data[exp_type]['imagesize'].apply(lambda x: x // 10**6)
+    
+    def save_training_sets(self, outpath=None, sfx="-2023"):
+        for exp_type in self.exp_types:
+            data = self.input_data[exp_type].copy()
+            data[self.index] = data.index
+            if outpath is None:
+                outpath = self.input_path
+            data.to_csv(f"{outpath}/train-{exp_type.lower()}{sfx}.csv", index=False)
