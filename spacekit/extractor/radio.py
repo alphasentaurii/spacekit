@@ -465,7 +465,8 @@ class JwstCalRadio(Radio):
         self.product_matches["IMAGE"] = dict()
         for k in image_products:
             try:
-                obs = Observations.query_criteria(obs_id=k)
+                obsid = k.replace("t1", "t*")
+                obs = Observations.query_criteria(obs_id=obsid)
                 if len(obs) < 1:
                     self.errs[k] = "No results found on MAST"
                     continue
@@ -544,3 +545,32 @@ class JwstCalRadio(Radio):
         tac_products = list(input_data["TAC"].index)
         self.log.info(f"Querying MAST for {len(tac_products)} L3 tac products")
         self.product_matches["TAC"] = dict()
+        for k in tac_products:
+            try:
+                obsid = k.replace("t1", "t*")
+                obs = Observations.query_criteria(obs_id=obsid)
+                if len(obs) < 1:
+                    self.errs[k] = "No results found on MAST"
+                    continue
+                try:
+                    targname = obs['target_name'][0]
+                except Exception:
+                    targname = None
+                data_prod = Observations.get_product_list(obs['obsid'])
+                filt_prod = Observations.filter_products(data_prod, **self.asn_kwargs)
+                if len(filt_prod) == 1:
+                    product = filt_prod['obs_id'][0]
+                    asn_file = filt_prod['productFilename'][0]
+                    asn_name = asn_file.replace('_asn.json', '')
+                    self.product_matches["TAC"][k] = dict(pname=product, asn=asn_name, targname=targname)
+                elif len(filt_prod) > 1:
+                    self.errs[k] = "Multiple filt_prod results in MAST"
+                    self.log.warning(f"MAST returned more than 1 result for {k}")
+                else:
+                    self.errs[k] = "No results found in MAST"
+                    self.log.warning(f"No results found for {k}")
+                    
+            except Exception as e:
+                self.errs[k] = str(e)
+        nresults = len(self.product_matches["TAC"])
+        self.log.info(f"{nresults} of {len(tac_products)} matched.")

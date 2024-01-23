@@ -572,6 +572,7 @@ class JwstCalScrubber(Scrubber):
         self.xcols = self.set_col_order()
         self.encoding_pairs = encoding_pairs
         self.mode = mode
+        self.coron_ami = ["MIR_4QPM", "MIR_LYOT", "NRC_CORON", "NIS_AMI"]
         self.scrape_inputs()
         self.get_level3_products()
         self.pixel_offsets()
@@ -691,7 +692,10 @@ class JwstCalScrubber(Scrubber):
             p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{v['FILTER']}"
         p = p.lower()
         del v["NEXPOSUR"]
-        if p in self.img_products:
+        if v['EXP_TYPE'] in self.coron_ami or v["TSOVISIT"] in [True, "t", "T", "True"]:
+            self.make_tac_product_name(k, v, p)
+            return
+        elif p in self.img_products:
             self.img_products[p][k] = v
         else:
             self.img_products[p] = {k: v}
@@ -711,9 +715,11 @@ class JwstCalScrubber(Scrubber):
         tnum : str
             number assigned to each unique target name within a program
         """
-        if v["EXP_TYPE"] == "MIR_LRS-SLITLESS" and v["TSOVISIT"] is False:
+        exptype = v["EXP_TYPE"]
+        if exptype == "MIR_LRS-SLITLESS" and v["TSOVISIT"] in [False, 'False', 'f', 'F']:
+            # L3 product for this exp_type only if TSO
             return
-        if v['EXP_TYPE'] in ["NRS_MSASPEC", "NRC_WFSS"]:
+        if exptype in ["NRS_MSASPEC", "NRC_WFSS"]:
             tnum = "s00001" if self.mode == "fits" else "s*"
         pupil = f"{v['PUPIL']}" if v["PUPIL"] not in ["NaN", "N/A", "NONE"] else ""
         fltr = f"{v['FILTER']}" if v["FILTER"] not in ["NaN", "N/A", "NONE"] else ""
@@ -723,7 +729,7 @@ class JwstCalScrubber(Scrubber):
         if fltr or grating:
             if not grating:
                 if pupil:
-                    if v["EXP_TYPE"] == "NRC_WFSS":
+                    if exptype == "NRC_WFSS":
                         # jw02078-o111_s00955_nircam_f356w-grismr
                         optelem = f"{fltr}-{pupil}"
                     else:
@@ -733,7 +739,7 @@ class JwstCalScrubber(Scrubber):
                     optelem = fltr # miri, niriss
             elif not fltr:
                 optelem = grating
-            elif v['EXP_TYPE'] == "NRS_IFU":
+            elif exptype == "NRS_IFU":
                 # jw01022-o016_t001_nirspec_g140h-f100lp
                 optelem = f"{grating}-{fltr}"
             else:
@@ -746,10 +752,23 @@ class JwstCalScrubber(Scrubber):
         p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{slit}{subarray}"
         p = p.lower()
         del v["NEXPOSUR"]
-        if p in self.spec_products:
+        if exptype in self.coron_ami or v["TSOVISIT"] in [True, "t", "T", "True"]:
+            if fltr == 'CLEAR' and grating == 'PRISM':
+                # These appear to drop fxd slit in product name
+                # jw01981-o051_t005_nirspec_clear-prism-sub512
+                p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{subarray}".lower()
+            self.make_tac_product_name(k, v, p)
+            return
+        elif p in self.spec_products:
             self.spec_products[p][k] = v
         else:
             self.spec_products[p] = {k: v}
+
+    def make_tac_product_name(self, k, v, p):
+        if p in self.tac_products:
+            self.tac_products[p][k] = v
+        else:
+            self.tac_products[p] = {k: v}
 
     def make_fgs_product_name(self, k, v, tnum):
         p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_clear"
@@ -758,17 +777,6 @@ class JwstCalScrubber(Scrubber):
             self.fgs_products[p][k] = v
         else:
             self.fgs_products[p] = {k: v}
-
-    def make_tac_product_name(self, k, v, tnum):
-        fltr = f"_{v['FILTER']}"
-        subarray = f"-{v['SUBARRAY']}"
-        pupil = f"-{v['PUPIL']}" if v["PUPIL"] not in ["NaN", "N/A", "NONE"] else ""
-        p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}{fltr}{pupil}{subarray}"
-        p = p.lower()
-        if p in self.tac_products:
-            self.tac_products[p][k] = v
-        else:
-            self.tac_products[p] = {k: v}
 
     def get_level3_products(self):
         """Determines potential L3 products based on obs, filters, detectors, etc
@@ -783,7 +791,6 @@ class JwstCalScrubber(Scrubber):
         self.spec_products = dict()
         self.fgs_products = dict()
         self.tac_products = dict()
-        coron_ami = ["MIR_4QPM", "MIR_LYOT", "NRC_CORON", "NIS_AMI"]
 
         for k, v in self.exp_headers.items():
             exp_type = v["EXP_TYPE"]
@@ -791,12 +798,10 @@ class JwstCalScrubber(Scrubber):
                 tnum = targs.get(v["TARGNAME"], "NONE") 
                 if tnum == "NONE" or isinstance(tnum, float):
                     tnum = "s00001" if self.mode == "fits" else "s*"
-                if exp_type in coron_ami or v["TSOVISIT"] in [True, "t", "T", "True"]:
-                    self.make_tac_product_name(k, v, tnum)
                 elif v["INSTRUME"] == "FGS":
                     if exp_type == "FGS_IMAGE":
                         self.make_fgs_product_name(k, v, tnum)
-                elif exp_type.split("_")[-1] == "IMAGE":
+                elif "IMAGE" in exp_type.split("_")[-1]:
                     self.make_image_product_name(k, v, tnum)
                 else:
                     self.make_spec_product_name(k, v, tnum)

@@ -188,14 +188,31 @@ class JwstCalIngest:
         self.input_path = input_path
         self.pfx = pfx
         self.sfx = sfx
-        self.exp_types = ["IMAGE", "SPEC", "TAC", "FGS"]
-        self.files = self.read_files()
+        self.exp_types = ["IMAGE", "SPEC", "TAC"]
+        self.files = None
         self.index = "Dataset"
+        self.dagcol = "DagNodeName"
         self.df = None
-        self.input_data = None
+        self.l1_dags = None
+        self.input_dict = None
+        self.input_data = {}
         self.product_matches = None
+        self.unmatched = {}
         self.__name__ = name
         self.log = Logger(self.__name__, **log_kws).spacekit_logger()
+    
+    def run_ingest(self, outpath=None, file_suffix="-2023"):
+        self.read_files()
+        if len(self.files) == 0:
+            return
+        self.ingest_data()
+        self.scrub_exposures()
+        self.save_training_sets(self, outpath=outpath, sfx=file_suffix)
+
+    def strip_file_suffix(self, x):
+        if x.endswith("fits"):
+            x = '_'.join(x.split('_')[:-1])
+        return x
 
     def extract_pid(self, x):
         if not isinstance(x, str):
@@ -212,20 +229,34 @@ class JwstCalIngest:
     def read_files(self):
         if self.input_path is None:
             self.input_path = os.getcwd()
-        self.files = sorted(glob.glob(f"{self.input_path}/{self.pfx}*{self.sfx}"))
+        self.files = []
+        pattern = f"{self.input_path}/{self.pfx}*{self.sfx}"
+        self.files = sorted(glob.glob(pattern))
+        if len(self.files) < 1:
+            self.log.warning(f"No files found using pattern: {pattern}")
+
+    def drop_l2_data(self, df):
+        alldags = sorted(list(df[self.dagcol].value_counts().index))
+        self.l1_dags = [d for d in alldags if '1' in d]
+        dags_l1_l3 =  [d for d in alldags if d in self.l1_dags or '3' in d]
+        df = df.loc[df[self.dagcol].isin(dags_l1_l3)]
+        return df
 
     def ingest_data(self):
         for f in self.files:
             df = pd.read_csv(f, index_col=self.index)
+            df = self.drop_l2_data(df)
             if self.df is None:
                 self.df = df
             else:
                 self.df = pd.concat([self.df, df], axis=0)
-    
+
     def scrub_exposures(self):
         self.df['dname'] = self.df.index
+        self.df['dname'] = self.df['dname'].apply(lambda x: self.strip_file_suffix(x))
+        self.df.set_index('dname', drop=False, inplace=True)
         self.df['pid'] = self.df['dname'].apply(lambda x: self.extract_pid(x))
-        self.df.rename({'TARGNAME':'targname'}, axis=1, inplace=True)
+        self.df.rename({'TARGNAME':'targname', 'ImageSize':'imagesize'}, axis=1, inplace=True)
         float_cols = [
             'CRVAL1',
             'CRVAL2',
@@ -238,56 +269,114 @@ class JwstCalIngest:
         ]
         for col in float_cols:
             self.df[col] = self.df[col].apply(lambda x: self.convert_to_float(x))
-        radio = JwstCalRadio()
+        
         scrubber = JwstCalScrubber(
                 self.input_path,
-                data=self.df.loc[self.df['DagNodeName'] == "LEVEL_1"],
+                data=self.df.loc[self.df[self.dagcol].isin(self.l1_dags)],
                 encoding_pairs=KEYPAIR_DATA,
                 mode='df'
             )
-        self.input_data = scrubber.input_data()
+        self.input_dict = scrubber.input_data()
         for exp_type in self.exp_types:
             inputs = scrubber.scrub_inputs(exp_type=exp_type)
             if inputs is not None:
                 inputs['dname'] = inputs.index
                 self.input_data[exp_type] = inputs
-        self.product_matches = radio.match_asn_filename(self.input_data)
-        for products in [
+        
+        for exp_type, products in list(zip(["IMAGE", "SPEC", "TAC"], [
             scrubber.img_products,
             scrubber.spec_products,
             scrubber.tac_products
-            ]:
-            self.match_products(products)
+            ])):
+            self.match_product_groups(products, exp_type=exp_type)
         self.drop_incomplete_data()
         self.convert_imagesize_units()
 
-    def match_products(self, products, exp_type="IMAGE"):
+    def match_product_groups(self, products, exp_type="IMAGE"):
         for k, v in products.items():
-            info = self.product_matches[exp_type].get(k, None)
-            if info:
-                try:
-                    imagesize = self.df.loc[self.df.dname == info['asn']]['ImageSize'][0]
-                except IndexError:
-                    imagesize = None # no L3 product
-                for key, value in info.items():
-                    self.input_data[exp_type].loc[k, key] = value
-                    for e in list(v.keys()):
-                        self.df.loc[e, key] = value
+            exposure = list(v.keys)[0]
+            info = self.df.loc[exposure]
+            l3 = self.df.loc[
+                (
+                    self.df['pid'] == info['pid']
+                ) & (
+                    self.df['OBSERVTN'] == info['OBSERVTN']
+                ) & (
+                    self.df['FILTER'] == info['FILTER']
+                ) & (
+                    self.df['GRATING'] == info['GRATING']
+                ) & (
+                    self.df['PUPIL'] == info['PUPIL']
+                ) & (
+                    self.df['EXP_TYPE'] == info['EXP_TYPE']
+                ) & (
+                    ~self.df['DagNodeName'].isin(self.l1_dags)
+                )
+            ]
+            if len(l3) == 0:
+                self.log.warning(f"No matching products identified: {k}")
+                continue
+            elif len(l3) > 1:
+                self.log.warning(f"Multiple products match: {k}")
+                pnames = sorted(list(l3.index), reverse=True)
+                pname = pnames[0] # default if better match not found
+                prefix = k.split('_')[0]
+                for p in pnames:
+                    if p.split('_')[0] == prefix:
+                        pname = p
+                        break
+                    else:
+                        continue
+                imagesize = l3.loc[pname]['imagesize']
+                if not isinstance(imagesize, int):
+                    imagesize = imagesize.max()
+            else:
+                pname = l3.dname[0]
+                imagesize = l3.imagesize[0]
+            self.input_data[exp_type].loc[k, 'pname'] = pname
+            self.input_data[exp_type].loc[k, 'imagesize'] = imagesize
+            self.df.loc[pname, 'pname'] = pname
+            for e in list(v.keys()):
+                self.df.loc[e, 'pname'] = pname
 
-                if imagesize is not None:
-                    self.df.loc[info['asn'], 'pname'] = info['pname']
-                    self.df.loc[info['asn'], 'targname'] = info['targname']
-                    self.input_data[exp_type].loc[k, 'imagesize'] = imagesize
+    def match_asn_products(self, scrubber, exp_type="IMAGE"):
+        radio = JwstCalRadio()
+        self.product_matches = radio.match_asn_filename(self.input_data)
+        for exp_type, products in list(zip(["IMAGE", "SPEC", "TAC"], [
+            scrubber.img_products,
+            scrubber.spec_products,
+            scrubber.tac_products
+            ])):
+            for k, v in products.items():
+                info = self.product_matches[exp_type].get(k, None)
+                if info:
+                    try:
+                        imagesize = self.df.loc[self.df.dname == info['asn']]['imagesize'][0]
+                    except IndexError:
+                        imagesize = None # no L3 product
+                    for key, value in info.items():
+                        self.input_data[exp_type].loc[k, key] = value
+                        for e in list(v.keys()):
+                            self.df.loc[e, key] = value
+
+                    if imagesize is not None:
+                        self.df.loc[info['asn'], 'pname'] = info['pname']
+                        self.df.loc[info['asn'], 'targname'] = info['targname']
+                        self.input_data[exp_type].loc[k, 'imagesize'] = imagesize
 
     def drop_incomplete_data(self):
         for exp_type in self.exp_types:
-            missing = self.input_data[exp_type].loc[self.input_data[exp_type]['imagesize'].isna()==True].index
-            self.log.info(f"Dropping {len(missing)} incomplete inputs for {exp_type}")
-            self.input_data[exp_type].drop(missing, axis=0, inplace=True)
+            if 'imagesize' in self.input_data[exp_type].columns:
+                self.unmatched[exp_type] = self.input_data[exp_type].loc[self.input_data[exp_type]['imagesize'].isna()==True].index
+            else:
+                self.unmatched[exp_type] = self.input_data[exp_type].index
+            self.log.info(f"Dropping {len(self.unmatched[exp_type])} incomplete inputs for {exp_type}")
+            self.input_data[exp_type].drop(self.unmatched[exp_type], axis=0, inplace=True)
 
     def convert_imagesize_units(self):
         for exp_type in self.exp_types:
-            self.input_data[exp_type]['imgsize_gb'] = self.input_data[exp_type]['imagesize'].apply(lambda x: x // 10**6)
+            if 'imagesize' in self.input_data[exp_type].columns:
+                self.input_data[exp_type]['imgsize_gb'] = self.input_data[exp_type]['imagesize'].apply(lambda x: x // 10**6)
     
     def save_training_sets(self, outpath=None, sfx="-2023"):
         for exp_type in self.exp_types:

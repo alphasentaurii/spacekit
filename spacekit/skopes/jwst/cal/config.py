@@ -201,6 +201,7 @@ KEYPAIR_DATA = {
         "NRCA1|NRCA2|NRCA4|NRCB1|NRCB2|NRCB3|NRCB4": 31,
         "NRCA1|NRCA2|NRCA4": 32,
         "NRCA2|NRCA3|NRCA4": 33,
+        "NRCA4|NRCB1|NRCB2|NRCB3|NRCB4": 34,
     },
     "filter": {
         "NONE": 0,
