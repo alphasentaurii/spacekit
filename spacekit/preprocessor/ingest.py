@@ -198,6 +198,9 @@ class JwstCalIngest:
         self.input_data = {}
         self.product_matches = None
         self.unmatched = {}
+        # *** TEMP *** #
+        self.asn_mode = False
+        self.scrubber = None
         self.__name__ = name
         self.log = Logger(self.__name__, **log_kws).spacekit_logger()
     
@@ -270,32 +273,41 @@ class JwstCalIngest:
         for col in float_cols:
             self.df[col] = self.df[col].apply(lambda x: self.convert_to_float(x))
         
-        scrubber = JwstCalScrubber(
+        self.scrubber = JwstCalScrubber(
                 self.input_path,
                 data=self.df.loc[self.df[self.dagcol].isin(self.l1_dags)],
                 encoding_pairs=KEYPAIR_DATA,
                 mode='df'
             )
-        self.input_dict = scrubber.input_data()
+        self.input_dict = self.scrubber.input_data()
+
         for exp_type in self.exp_types:
-            inputs = scrubber.scrub_inputs(exp_type=exp_type)
+            inputs = self.scrubber.scrub_inputs(exp_type=exp_type)
             if inputs is not None:
                 inputs['dname'] = inputs.index
                 self.input_data[exp_type] = inputs
-        
-        for exp_type, products in list(zip(["IMAGE", "SPEC", "TAC"], [
-            scrubber.img_products,
-            scrubber.spec_products,
-            scrubber.tac_products
-            ])):
-            self.match_product_groups(products, exp_type=exp_type)
+        # *** TEMP *** #
+        if self.asn_mode is True:
+            self.match_asn_products(self.scrubber)
+        else:
+            for exp_type, products in list(zip(["IMAGE", "SPEC", "TAC"], [
+                self.scrubber.img_products,
+                self.scrubber.spec_products,
+                self.scrubber.tac_products
+                ])):
+                self.match_product_groups(products, exp_type=exp_type)
         self.drop_incomplete_data()
         self.convert_imagesize_units()
 
     def match_product_groups(self, products, exp_type="IMAGE"):
         for k, v in products.items():
-            exposure = list(v.keys)[0]
+            exposure = list(v.keys())[0]
             info = self.df.loc[exposure]
+            if isinstance(info, pd.DataFrame):
+                if 'LEVEL_1' in list(info['DagNodeName'].unique()):
+                    info = info.loc[info['DagNodeName'] == 'LEVEL_1'].iloc[0]
+                else:
+                    info = info.iloc[0]
             l3 = self.df.loc[
                 (
                     self.df['pid'] == info['pid']
@@ -314,10 +326,10 @@ class JwstCalIngest:
                 )
             ]
             if len(l3) == 0:
-                self.log.warning(f"No matching products identified: {k}")
+                self.log.debug(f"No matching products identified: {k}")
                 continue
             elif len(l3) > 1:
-                self.log.warning(f"Multiple products match: {k}")
+                self.log.debug(f"Multiple products match: {k}")
                 pnames = sorted(list(l3.index), reverse=True)
                 pname = pnames[0] # default if better match not found
                 prefix = k.split('_')[0]
@@ -339,7 +351,7 @@ class JwstCalIngest:
             for e in list(v.keys()):
                 self.df.loc[e, 'pname'] = pname
 
-    def match_asn_products(self, scrubber, exp_type="IMAGE"):
+    def match_asn_products(self, scrubber):
         radio = JwstCalRadio()
         self.product_matches = radio.match_asn_filename(self.input_data)
         for exp_type, products in list(zip(["IMAGE", "SPEC", "TAC"], [
