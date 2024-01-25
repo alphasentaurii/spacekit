@@ -54,11 +54,6 @@ class Scrubber:
             self.log.error("data must be dict, dataframe or None")
 
     def extract_matching_columns(self, cols):
-        # print("\n*** Extracting FITS header prefix columns ***")
-        # extracted = []
-        # for c in cols:
-        #     extracted += [col for col in self.df if c in col]
-        # return extracted
         extract = [c for c in cols if c in self.df.columns]
         self.log.info(f"Extract matching columns: {extract}")
         self.df = self.df[extract]
@@ -684,7 +679,7 @@ class JwstCalScrubber(Scrubber):
         tnum : str
             number assigned to each unique target name within a program
         """
-        if v["PUPIL"] == "CLEAR":
+        if v["PUPIL"] in ["CLEAR", "CLEARP"]:
             p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{v['PUPIL']}-{v['FILTER']}"
         elif v["PUPIL"] not in ["NaN", "N/A", "NONE"]:
             p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{v['FILTER']}-{v['PUPIL']}"
@@ -729,8 +724,9 @@ class JwstCalScrubber(Scrubber):
         if fltr or grating:
             if not grating:
                 if pupil:
-                    if exptype == "NRC_WFSS":
+                    if exptype in ["NRC_WFSS", "NIS_SOSS", "NRC_TSGRISM"]:
                         # jw02078-o111_s00955_nircam_f356w-grismr
+                        # jw06543-o001_t1_niriss_clear-gr700xd-substrip256
                         optelem = f"{fltr}-{pupil}"
                     else:
                         # NIRISS: jw01089-o001_{source_id}_niriss_f140m-gr150r
@@ -789,8 +785,8 @@ class JwstCalScrubber(Scrubber):
         targs = dict(zip(targetnames, tnums))
         self.img_products = dict()
         self.spec_products = dict()
-        self.fgs_products = dict()
         self.tac_products = dict()
+        self.fgs_products = dict()
 
         for k, v in self.exp_headers.items():
             exp_type = v["EXP_TYPE"]
@@ -798,7 +794,7 @@ class JwstCalScrubber(Scrubber):
                 tnum = targs.get(v["TARGNAME"], "NONE") 
                 if tnum == "NONE" or isinstance(tnum, float):
                     tnum = "s00001" if self.mode == "fits" else "s*"
-                elif v["INSTRUME"] == "FGS":
+                if v["INSTRUME"] == "FGS":
                     if exp_type == "FGS_IMAGE":
                         self.make_fgs_product_name(k, v, tnum)
                 elif "IMAGE" in exp_type.split("_")[-1]:

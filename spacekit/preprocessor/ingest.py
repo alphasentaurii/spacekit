@@ -193,7 +193,7 @@ class JwstCalIngest:
         self.index = "Dataset"
         self.dagcol = "DagNodeName"
         self.df = None
-        self.l1_dags = None
+        self.l1_dags = []
         self.input_dict = None
         self.input_data = {}
         self.product_matches = None
@@ -240,9 +240,10 @@ class JwstCalIngest:
 
     def drop_l2_data(self, df):
         alldags = sorted(list(df[self.dagcol].value_counts().index))
-        self.l1_dags = [d for d in alldags if '1' in d]
-        dags_l1_l3 =  [d for d in alldags if d in self.l1_dags or '3' in d]
+        l1_dags = [d for d in alldags if '1' in d and 'B' not in d]
+        dags_l1_l3 =  [d for d in alldags if d in l1_dags or '3' in d]
         df = df.loc[df[self.dagcol].isin(dags_l1_l3)]
+        self.l1_dags.extend([l for l in l1_dags if l not in self.l1_dags])
         return df
 
     def ingest_data(self):
@@ -382,7 +383,7 @@ class JwstCalIngest:
                 self.unmatched[exp_type] = self.input_data[exp_type].loc[self.input_data[exp_type]['imagesize'].isna()==True].index
             else:
                 self.unmatched[exp_type] = self.input_data[exp_type].index
-            self.log.info(f"Dropping {len(self.unmatched[exp_type])} incomplete inputs for {exp_type}")
+            self.log.info(f"Dropping {len(self.unmatched[exp_type])} of {len(self.input_data[exp_type])} incomplete inputs for {exp_type}")
             self.input_data[exp_type].drop(self.unmatched[exp_type], axis=0, inplace=True)
 
     def convert_imagesize_units(self):

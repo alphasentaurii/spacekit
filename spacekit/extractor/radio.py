@@ -538,6 +538,8 @@ class JwstCalRadio(Radio):
                     self.errs[k] = "No results found in MAST"
             except Exception as e:
                 self.errs[k] = str(e)
+        nresults = len(self.product_matches["SPEC"])
+        self.log.info(f"{nresults} of {len(spec_products)} matched.")
 
     def match_tac_asn(self, input_data):
         if input_data["TAC"] is None:
