@@ -109,13 +109,14 @@ class PairEncoder:
 
     def handle_unknowns(self, unknowns):
         self.log.warning(f"Found unknown values:\n {self.arr[unknowns]}")
-        add_encoding = max(list(self.keypairs.values())) + 1
-        try:
-            self.keypairs[self.arr[unknowns][0]] = add_encoding
-            self.classes_ = list(self.keypairs.keys())
-            self.log.info("Successfully added encoding for unknown values.")
-        except Exception as e:
-            self.log.error("Unable to add encoding for unknown value(s)", e)
+        for u in unknowns:
+            add_encoding = max(list(self.keypairs.values())) + 1
+            try:
+                self.keypairs[self.arr[u]] = add_encoding
+                self.classes_ = list(self.keypairs.keys())
+                self.log.info("Successfully added encoding for unknown values.")
+            except Exception as e:
+                self.log.error("Unable to add encoding for unknown value(s)", e)
 
     def fit(self, data, keypairs, axiscol=None, handle_unknowns=True):
         if isinstance(data, pd.DataFrame):

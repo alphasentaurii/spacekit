@@ -679,27 +679,34 @@ class JwstCalScrubber(Scrubber):
         tnum : str
             number assigned to each unique target name within a program
         """
-        if v["PUPIL"] in ["CLEAR", "CLEARP"]:
-            p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{v['PUPIL']}-{v['FILTER']}"
-        elif v["PUPIL"] not in ["NaN", "N/A", "NONE"]:
-            p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{v['FILTER']}-{v['PUPIL']}"
+        pupil = f"{v['PUPIL']}" if v["PUPIL"] not in ["NaN", "N/A", "NONE"] else ""
+        fltr = f"{v['FILTER']}" if v["FILTER"] not in ["NaN", "N/A", "NONE"] else ""
+        subarray = f"-{v['SUBARRAY']}" if v["SUBARRAY"] not in ["NaN", "N/A", "NONE", "FULL"] else ""
+        if not pupil:
+            optelem = fltr
+        elif pupil in ["CLEAR", "CLEARP", "F405N"]:
+            optelem = f"{pupil}-{fltr}"
         else:
-            p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{v['FILTER']}"
-        p = p.lower()
-        del v["NEXPOSUR"]
+            optelem =  f"{fltr}-{pupil}"
+
+        p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{subarray}".lower()
+
         if v['EXP_TYPE'] in self.coron_ami or v["TSOVISIT"] in [True, "t", "T", "True"]:
             self.make_tac_product_name(k, v, p)
             return
-        elif p in self.img_products:
-            self.img_products[p][k] = v
         else:
-            self.img_products[p] = {k: v}
+            del v["NEXPOSUR"]
+            if p in self.img_products:
+                self.img_products[p][k] = v
+            else:
+                self.img_products[p] = {k: v}
 
     def make_spec_product_name(self, k, v, tnum):
         """Parse through exposure metadata to create expected L3 spectroscopy products. 
         NOTE: Although the pipeline would create multiple products for either source-based exposures
         or (channel-based) MIRI MRS exposures, only one product name will be created since the model is
         concerned with RAM, i.e. how large the memory footprint is to calibrate a set of input exposures.
+        Source-based products use "s00001" for the source; MIR_MRS exposures default to "ch1" for channel.
 
         Parameters
         ----------
@@ -714,8 +721,8 @@ class JwstCalScrubber(Scrubber):
         if exptype == "MIR_LRS-SLITLESS" and v["TSOVISIT"] in [False, 'False', 'f', 'F']:
             # L3 product for this exp_type only if TSO
             return
-        if exptype in ["NRS_MSASPEC", "NRC_WFSS"]:
-            tnum = "s00001" if self.mode == "fits" else "s*"
+        if exptype in ["NRC_WFSS", "NIS_WFSS", "NRS_MSASPEC", "NRS_FIXEDSLIT"]:
+            tnum = "s00001" # source-based exposure naming convention
         pupil = f"{v['PUPIL']}" if v["PUPIL"] not in ["NaN", "N/A", "NONE"] else ""
         fltr = f"{v['FILTER']}" if v["FILTER"] not in ["NaN", "N/A", "NONE"] else ""
         grating = (
@@ -745,9 +752,8 @@ class JwstCalScrubber(Scrubber):
         slit = f"-{v['FXD_SLIT']}" if v["FXD_SLIT"] not in ["NaN", "N/A", "NONE"] else ""
         subarray = f"-{v['SUBARRAY']}" if v["SUBARRAY"] not in ["NaN", "N/A", "NONE", "FULL"] else ""
         
-        p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{slit}{subarray}"
-        p = p.lower()
-        del v["NEXPOSUR"]
+        p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{slit}{subarray}".lower()
+        
         if exptype in self.coron_ami or v["TSOVISIT"] in [True, "t", "T", "True"]:
             if fltr == 'CLEAR' and grating == 'PRISM':
                 # These appear to drop fxd slit in product name
@@ -755,12 +761,26 @@ class JwstCalScrubber(Scrubber):
                 p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{subarray}".lower()
             self.make_tac_product_name(k, v, p)
             return
-        elif p in self.spec_products:
-            self.spec_products[p][k] = v
         else:
-            self.spec_products[p] = {k: v}
+            del v["NEXPOSUR"]
+            if p in self.spec_products:
+                self.spec_products[p][k] = v
+            else:
+                self.spec_products[p] = {k: v}
 
     def make_tac_product_name(self, k, v, p):
+        """If an image or spec product meets the required conditions, it is added
+        instead to the TAC products dictionary (Time-series, AMI, Coronagraph).
+
+        Parameters
+        ----------
+        k : str
+            exposure header key (L1 exposure name)
+        v : dict
+            exposure header data
+        p : str
+            product name
+        """
         if p in self.tac_products:
             self.tac_products[p][k] = v
         else:
@@ -776,11 +796,12 @@ class JwstCalScrubber(Scrubber):
 
     def get_level3_products(self):
         """Determines potential L3 products based on obs, filters, detectors, etc
-        Then groups input exposures by target+obs num+optelem(+fxd_slit,+subarray)
+        Then groups input exposures by target+obs num+optelem(+fxd_slit,+subarray).
+        Target names with no value ("NaN" or "NONE") are still assigned a target or
+        source number for the purpose of grouping exposures together. 
         """
         l3_types = self.level3_types()
-        targetnames = list(set([v.get("TARGNAME", "NONE") for v in self.exp_headers.values()]))
-        targetnames = [t for t in targetnames if isinstance(t, str) and t != "NONE"]
+        targetnames = list(set([v["TARGNAME"] for v in self.exp_headers.values()]))
         tnums = [f"t{i+1}" for i, _ in enumerate(targetnames)]
         targs = dict(zip(targetnames, tnums))
         self.img_products = dict()
@@ -791,9 +812,7 @@ class JwstCalScrubber(Scrubber):
         for k, v in self.exp_headers.items():
             exp_type = v["EXP_TYPE"]
             if exp_type in l3_types:
-                tnum = targs.get(v["TARGNAME"], "NONE") 
-                if tnum == "NONE" or isinstance(tnum, float):
-                    tnum = "s00001" if self.mode == "fits" else "s*"
+                tnum = targs.get(v["TARGNAME"]) 
                 if v["INSTRUME"] == "FGS":
                     if exp_type == "FGS_IMAGE":
                         self.make_fgs_product_name(k, v, tnum)

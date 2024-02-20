@@ -3,6 +3,7 @@ import sys
 import glob
 import shutil
 import pandas as pd
+from argparse import ArgumentParser
 from spacekit.logger.log import Logger
 from spacekit.extractor.scrape import JsonScraper
 from spacekit.preprocessor.scrub import HstSvmScrubber, JwstCalScrubber
@@ -184,16 +185,18 @@ class SvmAlignmentIngest:
 
 
 class JwstCalIngest:
-    def __init__(self, input_path=None, pfx="", sfx=".csv", name="JwstCalIngest", **log_kws):
+    def __init__(self, input_path=None, pfx="", sfx=".csv", outpath=None, name="JwstCalIngest", **log_kws):
         self.input_path = input_path
         self.pfx = pfx
         self.sfx = sfx
+        self.outpath = input_path if outpath is None else outpath
         self.exp_types = ["IMAGE", "SPEC", "TAC"]
         self.files = None
         self.index = "Dataset"
         self.dagcol = "DagNodeName"
         self.df = None
         self.l1_dags = []
+        self.l3_dags = []
         self.input_dict = None
         self.input_data = {}
         self.product_matches = None
@@ -204,13 +207,54 @@ class JwstCalIngest:
         self.__name__ = name
         self.log = Logger(self.__name__, **log_kws).spacekit_logger()
     
-    def run_ingest(self, outpath=None, file_suffix="-2023"):
+    def run_ingest(self, file_suffix="-2024"):
         self.read_files()
         if len(self.files) == 0:
             return
         self.ingest_data()
+        self.initial_scrub()
         self.scrub_exposures()
-        self.save_training_sets(self, outpath=outpath, sfx=file_suffix)
+        self.match_l1_to_l3()
+        self.drop_incomplete_data()
+        self.convert_imagesize_units()
+        self.save_training_sets(
+            self,
+            sfx=file_suffix,
+            unmatched=True,
+            raw=True,
+            drop_c=True,
+            save=True
+        )
+    
+    def read_files(self):
+        if self.input_path is None:
+            self.input_path = os.getcwd()
+        self.files = []
+        pattern = f"{self.input_path}/{self.pfx}*{self.sfx}"
+        self.files = sorted(glob.glob(pattern))
+        if len(self.files) < 1:
+            self.log.warning(f"No files found using pattern: {pattern}")
+
+    def drop_l2_data(self, df):
+        alldags = sorted(list(df[self.dagcol].value_counts().index))
+        l1_dags = [d for d in alldags if '1' in d]
+        l3_dags = [d for d in alldags if '3' in d]
+        dags_l1_l3 = l1_dags + l3_dags
+        df = df.loc[df[self.dagcol].isin(dags_l1_l3)]
+        self.l1_dags.extend([l for l in l1_dags if l not in self.l1_dags])
+        self.l3_dags.extend([l for l in l3_dags if l not in self.l3_dags])
+        return df
+
+    def ingest_data(self):
+        for i, f in enumerate(self.files):
+            df = pd.read_csv(f, index_col=self.index)
+            df = self.drop_l2_data(df)
+            filedate = os.path.basename(f).split('_')[0]
+            df['date'] = filedate
+            if self.df is None:
+                self.df = df
+            else:
+                self.df = pd.concat([self.df, df], axis=0)
 
     def strip_file_suffix(self, x):
         if x.endswith("fits"):
@@ -228,39 +272,54 @@ class JwstCalIngest:
     def convert_to_float(self, x):
         if x != "NONE":
             return float(x)
-    
-    def read_files(self):
-        if self.input_path is None:
-            self.input_path = os.getcwd()
-        self.files = []
-        pattern = f"{self.input_path}/{self.pfx}*{self.sfx}"
-        self.files = sorted(glob.glob(pattern))
-        if len(self.files) < 1:
-            self.log.warning(f"No files found using pattern: {pattern}")
 
-    def drop_l2_data(self, df):
-        alldags = sorted(list(df[self.dagcol].value_counts().index))
-        l1_dags = [d for d in alldags if '1' in d and 'B' not in d]
-        dags_l1_l3 =  [d for d in alldags if d in l1_dags or '3' in d]
-        df = df.loc[df[self.dagcol].isin(dags_l1_l3)]
-        self.l1_dags.extend([l for l in l1_dags if l not in self.l1_dags])
-        return df
-
-    def ingest_data(self):
-        for f in self.files:
-            df = pd.read_csv(f, index_col=self.index)
-            df = self.drop_l2_data(df)
-            if self.df is None:
-                self.df = df
+    def validate_obs(self, x):
+        if not isinstance(x, str):
+            x = str(x)
+        if len(x) < 3:
+            if len(x) == 1:
+                x = f"00{x}"
             else:
-                self.df = pd.concat([self.df, df], axis=0)
+                x = f"0{x}"
+        return x
 
-    def scrub_exposures(self):
+    def drop_duplicates(self, priority='imagesize'):
+        if priority is None:
+            self.df.drop_duplicates(subset='dname', inplace=True)
+        dupes = sorted(list(self.df.loc[self.df.duplicated(subset='dname')].index))
+        self.df.loc[dupes, 'dupe'] = True
+        self.df.loc[self.df.dupe.isna(), 'dupe'] = False
+        for d in dupes:
+            imgmax = self.df.loc[d]['imagesize'].max()
+            self.df.loc[(self.df.dname == d) & (self.df['imagesize'] == imgmax), 'dupe'] = False
+        self.df.reset_index(inplace=True)
+        self.log.info(f"Dropping {len(dupes)} duplicates (priority=imagesize)")
+        self.df.drop(self.df.loc[self.df.dupe].index, axis=0, inplace=True)
+        self.df.drop('dupe', axis=1, inplace=True)
+        if len(sorted(list(self.df.loc[self.df.duplicated(subset='dname')].index))) > 0:
+            self.df.drop_duplicates(subset='dname', inplace=True)
+
+    def extract_obs(self, x):
+        pfx = x.split('_')[0]
+        pfx2 = pfx.split('-')
+        if len(pfx2) > 1:
+            obs = pfx2[1][1:]
+        else:
+            obs = pfx[7:10]
+        return obs
+
+    def initial_scrub(self):
         self.df['dname'] = self.df.index
         self.df['dname'] = self.df['dname'].apply(lambda x: self.strip_file_suffix(x))
+        self.df.rename({'ImageSize':'imagesize'}, axis=1, inplace=True)
+        self.drop_duplicates()
         self.df.set_index('dname', drop=False, inplace=True)
         self.df['pid'] = self.df['dname'].apply(lambda x: self.extract_pid(x))
-        self.df.rename({'TARGNAME':'targname', 'ImageSize':'imagesize'}, axis=1, inplace=True)
+        # *** TEMP *** #
+        if self.asn_mode is True:
+            self.df['OBSERVTN'] = self.df['dname'].apply(lambda x: self.extract_obs(x))
+        # *** end TEMP *** #
+        self.df['OBSERVTN'] = self.df['OBSERVTN'].apply(lambda x: self.validate_obs(x))
         float_cols = [
             'CRVAL1',
             'CRVAL2',
@@ -273,7 +332,8 @@ class JwstCalIngest:
         ]
         for col in float_cols:
             self.df[col] = self.df[col].apply(lambda x: self.convert_to_float(x))
-        
+
+    def scrub_exposures(self):
         self.scrubber = JwstCalScrubber(
                 self.input_path,
                 data=self.df.loc[self.df[self.dagcol].isin(self.l1_dags)],
@@ -281,15 +341,17 @@ class JwstCalIngest:
                 mode='df'
             )
         self.input_dict = self.scrubber.input_data()
-
         for exp_type in self.exp_types:
             inputs = self.scrubber.scrub_inputs(exp_type=exp_type)
             if inputs is not None:
                 inputs['dname'] = inputs.index
                 self.input_data[exp_type] = inputs
+    
+    def match_l1_to_l3(self):
         # *** TEMP *** #
         if self.asn_mode is True:
-            self.match_asn_products(self.scrubber)
+            self.match_asn_products()
+        # *** end TEMP *** #
         else:
             for exp_type, products in list(zip(["IMAGE", "SPEC", "TAC"], [
                 self.scrubber.img_products,
@@ -297,8 +359,7 @@ class JwstCalIngest:
                 self.scrubber.tac_products
                 ])):
                 self.match_product_groups(products, exp_type=exp_type)
-        self.drop_incomplete_data()
-        self.convert_imagesize_units()
+
 
     def match_product_groups(self, products, exp_type="IMAGE"):
         for k, v in products.items():
@@ -344,57 +405,101 @@ class JwstCalIngest:
                 if not isinstance(imagesize, int):
                     imagesize = imagesize.max()
             else:
-                pname = l3.dname[0]
-                imagesize = l3.imagesize[0]
+                pname = l3.iloc[0]['dname']
+                imagesize = l3.iloc[0]['imagesize']
             self.input_data[exp_type].loc[k, 'pname'] = pname
             self.input_data[exp_type].loc[k, 'imagesize'] = imagesize
             self.df.loc[pname, 'pname'] = pname
             for e in list(v.keys()):
                 self.df.loc[e, 'pname'] = pname
 
-    def match_asn_products(self, scrubber):
+    def match_asn_products(self):
+        def asn_wildcard(x):
+            asndate = x.split('_')[1]
+            asnwild = x.replace(asndate, '*')
+            return asnwild
+        self.df.loc[~self.df.DagNodeName.isin(self.l1_dags)]
         radio = JwstCalRadio()
         self.product_matches = radio.match_asn_filename(self.input_data)
         for exp_type, products in list(zip(["IMAGE", "SPEC", "TAC"], [
-            scrubber.img_products,
-            scrubber.spec_products,
-            scrubber.tac_products
+            self.scrubber.img_products,
+            self.scrubber.spec_products,
+            self.scrubber.tac_products
             ])):
             for k, v in products.items():
                 info = self.product_matches[exp_type].get(k, None)
                 if info:
                     try:
-                        imagesize = self.df.loc[self.df.dname == info['asn']]['imagesize'][0]
+                        imagesize = self.df.loc[self.df.dname == info['asn']]['imagesize'].values[0]
                     except IndexError:
                         imagesize = None # no L3 product
                     for key, value in info.items():
-                        self.input_data[exp_type].loc[k, key] = value
+                        self.input_data[exp_type].loc[k, key.lower()] = value
                         for e in list(v.keys()):
                             self.df.loc[e, key] = value
 
                     if imagesize is not None:
                         self.df.loc[info['asn'], 'pname'] = info['pname']
-                        self.df.loc[info['asn'], 'targname'] = info['targname']
+                        self.df.loc[info['asn'], 'TARGNAME'] = info['TARGNAME']
                         self.input_data[exp_type].loc[k, 'imagesize'] = imagesize
 
+    def drop_combined_products(self, save=True):
+        l3 = self.df.loc[~self.df.DagNodeName.isin(self.l1_dags)].dname.values
+        c = [p for p in l3 if p.split('-')[1][0] == 'c']
+        if len(c) > 0:
+            cdata = self.df.loc[self.df.dname.isin(c)]
+            if save is True:
+                cdata.loc[:, self.index] = cdata.index
+                cdata.to_csv(f"{self.outpath}/c1000.csv", index=False)
+                self.log.info(f"c1000 data saved to: ")
+            self.log.info(f"Dropping {len(c)} c1000 products")
+            self.df.drop(c, axis=0, inplace=True)
+
     def drop_incomplete_data(self):
-        for exp_type in self.exp_types:
-            if 'imagesize' in self.input_data[exp_type].columns:
-                self.unmatched[exp_type] = self.input_data[exp_type].loc[self.input_data[exp_type]['imagesize'].isna()==True].index
-            else:
-                self.unmatched[exp_type] = self.input_data[exp_type].index
-            self.log.info(f"Dropping {len(self.unmatched[exp_type])} of {len(self.input_data[exp_type])} incomplete inputs for {exp_type}")
-            self.input_data[exp_type].drop(self.unmatched[exp_type], axis=0, inplace=True)
+        for exp_type in list(self.input_data.keys()):
+            try:
+                if 'imagesize' in self.input_data[exp_type].columns:
+                    self.unmatched[exp_type] = self.input_data[exp_type].loc[self.input_data[exp_type]['imagesize'].isna()]
+                else:
+                    self.unmatched[exp_type] = self.input_data[exp_type]
+                self.log.info(f"Dropping {len(self.unmatched[exp_type].index)} of {len(self.input_data[exp_type].index)} incomplete inputs for {exp_type}")
+                self.input_data[exp_type].drop(self.unmatched[exp_type].index, axis=0, inplace=True)
+            except KeyError:
+                continue
 
     def convert_imagesize_units(self):
         for exp_type in self.exp_types:
-            if 'imagesize' in self.input_data[exp_type].columns:
-                self.input_data[exp_type]['imgsize_gb'] = self.input_data[exp_type]['imagesize'].apply(lambda x: x // 10**6)
-    
-    def save_training_sets(self, outpath=None, sfx="-2023"):
-        for exp_type in self.exp_types:
+            try:
+                if 'imagesize' in self.input_data[exp_type].columns:
+                    self.input_data[exp_type]['imgsize_gb'] = self.input_data[exp_type]['imagesize'].apply(lambda x: x / 10**6)
+            except KeyError:
+                continue
+
+    def save_raw_dataset(self, sfx="", drop_c=True, save=True):
+        if drop_c is True:
+            self.drop_combined_products(save=save)
+        self.df[:, self.index] = self.df.index
+        self.df.to_csv(f"{self.outpath}/ingest{sfx}.csv", index=False)
+
+    def save_training_sets(self, sfx="-2024", unmatched=True, raw=True, drop_c=True, save=True):
+        for exp_type in list(self.input_data.keys()):
             data = self.input_data[exp_type].copy()
-            data[self.index] = data.index
-            if outpath is None:
-                outpath = self.input_path
-            data.to_csv(f"{outpath}/train-{exp_type.lower()}{sfx}.csv", index=False)
+            data.loc[:, self.index] = data.index
+            data.to_csv(f"{self.outpath}/train-{exp_type.lower()}{sfx}.csv", index=False)
+            if unmatched is True and exp_type in list(self.unmatched.keys()):
+                self.unmatched[exp_type].to_csv(f"{self.outpath}/unmatched-{exp_type.lower()}{sfx}.csv", index=False)
+        if raw is True:
+            self.save_raw_dataset(sfx=sfx, drop_c=drop_c, save=save)
+
+
+
+
+if __name__ == "__main__":
+    parser = ArgumentParser.parse_args(
+        prog="spacekit", usage="spacekit.preprocessor.ingest input_path [options: --skope, -p, -s, -e]"
+    )
+    parser.add_argument("input_path", type=str, help="")
+    parser.add_argument("--skope", type=str, default="jwst", help="")
+    parser.add_argument("-p", "--pfx", type=str, default="", help="file name prefix to limit search on local disk")
+    parser.add_argument("-s", "--sfx", type=str, default=".csv", help="file name suffix to limit search on local disk")
+    parser.add_argument("-e", "--extra_data", type=str, default=None, help="")

@@ -1,6 +1,7 @@
 import os
 import shutil
 import glob
+import re
 import boto3
 import numpy as np
 import pandas as pd
@@ -450,12 +451,105 @@ class JwstCalRadio(Radio):
                 productGroupDescription=['Minimum Recommended Products']
         )
         self.errs = {}
+        self.verbose = False
 
     def match_asn_filename(self, input_data):
-        self.match_image_asn(input_data)
-        self.match_spec_asn(input_data)
-        self.match_tac_asn(input_data)
+        # self.match_image_asn(input_data)
+        # self.match_spec_asn(input_data)
+        # self.match_tac_asn(input_data)
+        for exptype in list(input_data.keys()):
+            if input_data[exptype] is None:
+                continue
+            products = list(input_data[exptype].index)
+            self.log.info(f"Querying MAST for {len(products)} L3 {exptype} products")
+            self.product_matches[exptype] = dict()
+            self.errs[exptype] = dict()
+            spec = True if exptype == 'SPEC' else False
+            query_params = dict(wildcard=True, limit=1) if spec is True else {}
+            for k in products:
+                try:
+                    obsid = self.get_obsid(k, spec=spec)
+                    filt_prod, targname = self.run_query(obsid, **query_params)
+                    if len(filt_prod) > 0:
+                        match = self.add_match(filt_prod, targname)
+                        self.product_matches[exptype][k] = match
+                        if self.verbose:
+                            self.log.info(f"{k} = {match['pname']} = {match['asn']}")
+                    else:
+                        self.log_error(k, exptype)
+                except Exception as e:
+                    self.errs[exptype][k] = str(e)
+            nresults = len(self.product_matches[exptype])
+            self.log.info(f"{nresults} of {len(products)} matched for {exptype}.")
         return self.product_matches
+
+    def get_obsid(self, k, spec=False):
+        pattern = re.compile('t[0-9]{1,3}')
+        if spec is False:
+            trg = k.split("_")[1]
+            m = re.match(pattern, trg)
+            if m:
+                obsid = k.replace(m[0], "t*") + "*"
+            else:
+                obsid = k + "*"
+        else:
+            if k.split('_')[-2] == 'miri': # miri ifu
+                obsid = k + "ch*"
+            else:
+                obsid = k+"*"
+            
+            trg = obsid.split("_")[1]
+            if trg not in ["s*", "t*"]:
+                m = re.match(pattern, trg)
+                if m:
+                    obsid = obsid.replace(m[0], "t*")
+        return obsid
+
+    def log_error(self, k, exptype):
+        self.errs[exptype][k] = "No results found in MAST"
+        self.log.warning(f"No results found for {k}")
+    
+    def run_query(self, obsid, wildcard=False, limit=0):
+        filt_prod = [] 
+        targname = None
+        obs = Observations.query_criteria(obs_id=obsid)
+        if len(obs) == 0 and wildcard is True:
+            obs = self.wildcard_query(obsid)
+        if len(obs) > 1 and limit > 0:
+            source_ids = sorted([o['obs_id'] for o in obs])
+            # limit to first result
+            obsid = source_ids[0]
+            obs = Observations.query_criteria(obs_id=obsid)
+        if len(obs) > 0:
+            try:
+                targname = obs['target_name'][0]
+            except Exception:
+                targname = None
+            data_prod = Observations.get_product_list(obs['obsid'])
+            filt_prod = Observations.filter_products(data_prod, **self.asn_kwargs)
+  
+        return filt_prod, targname
+
+    def wildcard_query(self, obsid):
+        if len(obsid.split("s*")) > 1:
+            wild = obsid.split("s*") # s00001
+        elif len(obsid.split("t*")) > 1:
+            wild = obsid.split("t*")
+        else:
+            wild = None
+        if wild:
+            obsid_wild = '*'.join(wild)
+            obs = Observations.query_criteria(obs_id=obsid_wild)
+        else:
+            obs = []
+        return obs
+
+    def add_match(self, filt_prod, targname):
+        product = filt_prod['obs_id'][0]
+        asn_file = filt_prod['productFilename'][0]
+        asn_name = asn_file.replace('_asn.json', '')
+        match = dict(pname=product, asn=asn_name, TARGNAME=targname)
+        return match
 
     def match_image_asn(self, input_data):
         if input_data["IMAGE"] is None:
@@ -463,33 +557,20 @@ class JwstCalRadio(Radio):
         image_products = list(input_data["IMAGE"].index)
         self.log.info(f"Querying MAST for {len(image_products)} L3 image products")
         self.product_matches["IMAGE"] = dict()
+        self.errs['IMAGE'] = dict()
         for k in image_products:
             try:
-                obsid = k.replace("t1", "t*")
-                obs = Observations.query_criteria(obs_id=obsid)
-                if len(obs) < 1:
-                    self.errs[k] = "No results found on MAST"
-                    continue
-                try:
-                    targname = obs['target_name'][0]
-                except Exception:
-                    targname = None
-                data_prod = Observations.get_product_list(obs['obsid'])
-                filt_prod = Observations.filter_products(data_prod, **self.asn_kwargs)
-                if len(filt_prod) == 1:
-                    product = filt_prod['obs_id'][0]
-                    asn_file = filt_prod['productFilename'][0]
-                    asn_name = asn_file.replace('_asn.json', '')
-                    self.product_matches["IMAGE"][k] = dict(pname=product, asn=asn_name, targname=targname)
-                elif len(filt_prod) > 1:
-                    self.errs[k] = "Multiple filt_prod results in MAST"
-                    self.log.warning(f"MAST returned more than 1 result for {k}")
+                obsid = self.get_obsid(k)
+                filt_prod, targname = self.run_query(obsid)
+                if len(filt_prod) > 0:
+                    match = self.add_match(filt_prod, targname)
+                    self.product_matches["IMAGE"][k] = match
+                    if self.verbose:
+                        self.log.info(f"{k} = {match['pname']} = {match['asn']}")
                 else:
-                    self.errs[k] = "No results found in MAST"
-                    self.log.warning(f"No results found for {k}")
-                    
+                    self.log_error(k, 'IMAGE')
             except Exception as e:
-                self.errs[k] = str(e)
+                self.errs['IMAGE'][k] = str(e)
         nresults = len(self.product_matches["IMAGE"])
         self.log.info(f"{nresults} of {len(image_products)} matched.")
 
@@ -499,45 +580,20 @@ class JwstCalRadio(Radio):
         spec_products = list(input_data["SPEC"].index)
         self.log.info(f"Querying MAST for {len(spec_products)} L3 spec products")
         self.product_matches["SPEC"] = dict()
+        self.errs['SPEC'] = dict()
         for k in spec_products:
-            if k.split('_')[-2] == 'miri': # miri ifu
-                obsid = k + "ch*"
-            else:
-                obsid = k+"*"
             try:
-                obs = Observations.query_criteria(obs_id=obsid)
-                if len(obs) == 0:
-                    if k.split("s*") > 1:
-                        obsid_wild = '*'.join(k.split("s*")) # s00001
-                    else:
-                        obsid_wild = '*'.join(k.split("t*")) # s00001
-                    obs = Observations.query_criteria(obs_id=obsid_wild)
-                    if len(obs) == 0:
-                        self.log.warning(f"No results found for {k}")
-                        self.errs[k] = "No results found in MAST"
-                        continue
-                if len(obs) > 1:
-                    source_ids = sorted([o['obs_id'] for o in obs])
-                    # limit to first result
-                    obsid = source_ids[0]
-                    obs = Observations.query_criteria(obs_id=obsid)
-
-                try:
-                    targname = obs['target_name'][0]
-                except Exception:
-                    targname = None
-                data_prod = Observations.get_product_list(obs['obsid'])
-                filt_prod = Observations.filter_products(data_prod, **self.asn_kwargs)
+                obsid = self.get_obsid(k, spec=True)
+                filt_prod, targname = self.run_query(obsid, wildcard=True, limit=1)
                 if len(filt_prod) > 0:
-                    product = filt_prod['obs_id'][0]
-                    asn_file = filt_prod['productFilename'][0]
-                    asn_name = asn_file.replace('_asn.json', '')
-                    self.product_matches["SPEC"][k] = dict(pname=product, asn=asn_name, targname=targname)
+                    match = self.add_match(filt_prod, targname)
+                    self.product_matches["SPEC"][k] = match
+                    if self.verbose:
+                        self.log.info(f"{k} = {match['pname']} = {match['asn']}")
                 else:
-                    self.log.warning(f"No results found for {k}")
-                    self.errs[k] = "No results found in MAST"
+                    self.log_error(k, 'SPEC')
             except Exception as e:
-                self.errs[k] = str(e)
+                self.errs['SPEC'][k] = str(e)
         nresults = len(self.product_matches["SPEC"])
         self.log.info(f"{nresults} of {len(spec_products)} matched.")
 
@@ -547,32 +603,19 @@ class JwstCalRadio(Radio):
         tac_products = list(input_data["TAC"].index)
         self.log.info(f"Querying MAST for {len(tac_products)} L3 tac products")
         self.product_matches["TAC"] = dict()
+        self.errs['TAC'] = dict()
         for k in tac_products:
             try:
-                obsid = k.replace("t1", "t*")
-                obs = Observations.query_criteria(obs_id=obsid)
-                if len(obs) < 1:
-                    self.errs[k] = "No results found on MAST"
-                    continue
-                try:
-                    targname = obs['target_name'][0]
-                except Exception:
-                    targname = None
-                data_prod = Observations.get_product_list(obs['obsid'])
-                filt_prod = Observations.filter_products(data_prod, **self.asn_kwargs)
-                if len(filt_prod) == 1:
-                    product = filt_prod['obs_id'][0]
-                    asn_file = filt_prod['productFilename'][0]
-                    asn_name = asn_file.replace('_asn.json', '')
-                    self.product_matches["TAC"][k] = dict(pname=product, asn=asn_name, targname=targname)
-                elif len(filt_prod) > 1:
-                    self.errs[k] = "Multiple filt_prod results in MAST"
-                    self.log.warning(f"MAST returned more than 1 result for {k}")
+                obsid = self.get_obsid(k)
+                filt_prod, targname = self.run_query(obsid)
+                if len(filt_prod) > 0:
+                    match = self.add_match(filt_prod, targname)
+                    self.product_matches["TAC"][k] = match
+                    if self.verbose:
+                        self.log.info(f"{k} = {match['pname']} = {match['asn']}")
                 else:
-                    self.errs[k] = "No results found in MAST"
-                    self.log.warning(f"No results found for {k}")
-                    
+                    self.log_error(k, 'TAC')
             except Exception as e:
-                self.errs[k] = str(e)
+                self.errs['TAC'][k] = str(e)
         nresults = len(self.product_matches["TAC"])
         self.log.info(f"{nresults} of {len(tac_products)} matched.")
