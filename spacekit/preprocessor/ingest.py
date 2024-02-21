@@ -352,18 +352,8 @@ class JwstCalIngest:
         return map(lambda x: pd.DataFrame.from_dict(x, orient='index'), data)
 
     def run_matching(self):
-        # TODO: test map version
-        # map(
-        #     lambda x, y: self.match_product_groups(x, y), 
-        #     self.exp_types,
-        #     [self.scrb.img_products, self.scrb.spec_products, self.scrb.tac_products]
-        # )
-        for exp_type, products in list(zip(["IMAGE", "SPEC", "TAC"], [
-            self.scrb.img_products,
-            self.scrb.spec_products,
-            self.scrb.tac_products
-            ])):
-            self.match_product_groups(products, exp_type)
+        for exp_type in self.exp_types:
+            self.match_product_groups(exp_type)
 
     def match_product_groups(self, exp_type):
         for k, v in self.scrb.expdata[exp_type].items():
@@ -402,38 +392,6 @@ class JwstCalIngest:
             self.df.loc[pname, 'pname'] = pname
             self.df.loc[self.df.dname.isin(exposures), 'pname'] = pname
             self.df.loc[pname, 'pwild'] = k
-
-    # *** TEMP *** #
-    # TODO: Remove once v1 asn-based data preprocessing complete 
-    def match_asn_products(self):
-        def asn_wildcard(x):
-            asndate = x.split('_')[1]
-            asnwild = x.replace(asndate, '*')
-            return asnwild
-        self.df.loc[
-            self.df.DagNodeName.isin(self.l3_dags), 'asnwild'
-        ] = self.df.loc[self.df.DagNodeName.isin(self.l3_dags)]['dname'].apply(
-            lambda x: asn_wildcard(x)
-        )
-        radio = JwstCalRadio()
-        self.product_matches = radio.match_asn_filename(self.data)
-        for exp_type in ["IMAGE", "SPEC", "TAC"]:
-            for k, v in self.scrb.expdata[exp_type].items():
-                info = self.product_matches[exp_type].get(k, None)
-                if info:
-                    try:
-                        imagesize = self.df.loc[self.df.dname == info['asn']]['imagesize'].values[0]
-                    except IndexError:
-                        imagesize = None # no L3 product
-                    for key, value in info.items():
-                        self.data[exp_type].loc[k, key.lower()] = value
-                        for e in list(v.keys()):
-                            self.df.loc[e, key] = value
-
-                    if imagesize is not None:
-                        self.df.loc[info['asn'], 'pname'] = info['pname']
-                        self.df.loc[info['asn'], 'TARGNAME'] = info['TARGNAME']
-                        self.data[exp_type].loc[k, 'imagesize'] = imagesize
 
     def drop_mosaics(self):
         self.df['mosaic'] = self.df['dname'].apply(lambda x: self.mark_mosaics(x))
@@ -475,8 +433,20 @@ class JwstCalIngest:
         alldags = sorted(list(self.df[self.dagcol].value_counts().index))
         self.l1_dags = [d for d in alldags if '1' in d]
         self.l3_dags = [d for d in alldags if '3' in d]
-    
+
+    #TODO
     def extrapolate_datasets(self, fpath=None):
+        """
+        #TODO
+        1. load priors (unmatched L1): ingest.csv
+        2. scrape new data file
+        3. initial scrub on new data
+        4. combine new data with priors
+        5. scrub combined datasets
+        6. run matching
+        7. append/update training data: preprocessed.csv, train-{exp}.csv
+        8. separate matched/unmatched and save/overwrite: ingest.csv, rem-{exp}.csv
+        """
         fpath = self.outpath if fpath is None else fpath
         df = pd.read_csv(f"{fpath}/ingest.csv")
         df.set_index('dname', drop=False, inplace=True)
