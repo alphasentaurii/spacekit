@@ -550,6 +550,10 @@ class JwstCalScrubber(Scrubber):
         self.input_path = input_path
         self.exp_headers = None
         self.products = dict()
+        self.img_products = dict()
+        self.spec_products = dict()
+        self.tac_products = dict()
+        self.fgs_products = dict()
         self.imgpix = None
         self.specpix = None
         self.tacpix = None
@@ -558,13 +562,13 @@ class JwstCalScrubber(Scrubber):
         self.sfx = sfx
         super().__init__(
             data=data,
-            col_order=self.set_col_order(),
+            col_order=self.xcol_order(),
             dropnans=dropnans,
             save_raw=save_raw,
             name="JwstCalScrubber",
             **log_kws,
         )
-        self.xcols = self.set_col_order()
+        self.xcols = self.xcol_order()
         self.encoding_pairs = encoding_pairs
         self.mode = mode
         self.coron_ami = ["MIR_4QPM", "MIR_LYOT", "NRC_CORON", "NIS_AMI"]
@@ -572,7 +576,13 @@ class JwstCalScrubber(Scrubber):
         self.get_level3_products()
         self.pixel_offsets()
 
-    def set_col_order(self):
+
+
+    @property
+    def xcol_order(self):
+        return self._xcol_order()
+
+    def _xcol_order(self):
         """Used for resetting the order of columns in the final preprocessed dataframe.
 
         Returns
@@ -610,7 +620,11 @@ class JwstCalScrubber(Scrubber):
             "crowdfld",
         ]
 
+    @property
     def level3_types(self):
+        return self._level3_types()
+
+    def _level3_types(self):
         """Exposure types included in Level 3 data processing.
 
         Returns
@@ -640,6 +654,19 @@ class JwstCalScrubber(Scrubber):
             "NRS_MSASPEC",
             "NRS_BRIGHTOBJ",  # TSO always
         ]
+
+
+    @property
+    def expdata(self):
+        return self._expdata()
+
+    def _expdata(self):
+        return dict(
+            IMAGE=self.img_products,
+            SPEC=self.spec_products,
+            TAC=self.tac_products,
+            FGS=self.fgs_products
+        )
 
     def scrape_inputs(self):
         """Scrape input exposure header metadata from fits files on local disk located at `self.input_path`.
@@ -693,6 +720,9 @@ class JwstCalScrubber(Scrubber):
 
         if v['EXP_TYPE'] in self.coron_ami or v["TSOVISIT"] in [True, "t", "T", "True"]:
             self.make_tac_product_name(k, v, p)
+            return
+        elif v["INSTRUME"] == "FGS":
+            self.make_fgs_product_name(k, v, p)
             return
         else:
             del v["NEXPOSUR"]
@@ -786,9 +816,9 @@ class JwstCalScrubber(Scrubber):
         else:
             self.tac_products[p] = {k: v}
 
-    def make_fgs_product_name(self, k, v, tnum):
-        p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_clear"
-        p = p.lower()
+    def make_fgs_product_name(self, k, v, p):
+        # p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_clear"
+        # p = p.lower()
         if p in self.fgs_products:
             self.fgs_products[p][k] = v
         else:
@@ -800,23 +830,19 @@ class JwstCalScrubber(Scrubber):
         Target names with no value ("NaN" or "NONE") are still assigned a target or
         source number for the purpose of grouping exposures together. 
         """
-        l3_types = self.level3_types()
+        
         targetnames = list(set([v["TARGNAME"] for v in self.exp_headers.values()]))
         tnums = [f"t{i+1}" for i, _ in enumerate(targetnames)]
         targs = dict(zip(targetnames, tnums))
-        self.img_products = dict()
-        self.spec_products = dict()
-        self.tac_products = dict()
-        self.fgs_products = dict()
 
         for k, v in self.exp_headers.items():
             exp_type = v["EXP_TYPE"]
-            if exp_type in l3_types:
+            if exp_type in self.level3_types:
                 tnum = targs.get(v["TARGNAME"]) 
-                if v["INSTRUME"] == "FGS":
-                    if exp_type == "FGS_IMAGE":
-                        self.make_fgs_product_name(k, v, tnum)
-                elif "IMAGE" in exp_type.split("_")[-1]:
+                # if v["INSTRUME"] == "FGS":
+                #     if exp_type == "FGS_IMAGE":
+                #         self.make_fgs_product_name(k, v, tnum)
+                if "IMAGE" in exp_type.split("_")[-1]:
                     self.make_image_product_name(k, v, tnum)
                 else:
                     self.make_spec_product_name(k, v, tnum)
@@ -832,6 +858,7 @@ class JwstCalScrubber(Scrubber):
             if product not in self.products:
                 self.products[product] = exp_data
 
+    @property
     def input_data(self):
         """Preprocessed input data grouped by exposure type
 
@@ -863,6 +890,7 @@ class JwstCalScrubber(Scrubber):
         data = self.input_data()[exp_type]
         if not data:
             return None
+        # Set df as attr to utilize super methods
         self.df = pd.DataFrame.from_dict(data, orient="index")
         super().rename_cols(new=[c.lower() for c in self.df.columns])
         super().rename_cols(old=["instrume"], new=["instr"])
