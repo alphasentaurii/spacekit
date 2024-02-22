@@ -185,11 +185,69 @@ class SvmAlignmentIngest:
 
 
 class JwstCalIngest:
-    def __init__(self, input_path=None, pfx="", outpath=None, batch_id=None, name="JwstCalIngest", **log_kws):
+    def __init__(self, input_path=None, pfx="", outpath=None, **log_kws):
+        """Loads raw JWST Calibration Pipeline metadata from local disk (`input_path`)
+        and runs initial ML preprocessing steps necessary prior to model training. The resulting 
+        dataframes will be "ingested" into any pre-existing training sets located in `outpath`. 
+        This outpath acts as the primary database containing several "tables" (dataframes stored
+        in .csv files). This class is designed to run on single or multiple files at a time 
+        (limit specificity using 'pfx`). The contents of the raw metadata files are expected
+        to contain:
+ 
+            1) columns consistent with Fits header keyword-values used in JWST Cal model training 
+            (see `spacekit.skopes.jwst.cal.config`) 
+
+            2) rows of Level 1/1b exposures (inputs/features) along with Level 3 products
+
+            3) imagesize (memory footprint) for each L3 product (outputs/target)
+        
+        At STSCI, additional model training data is acquired daily from the telescope's calibration pipeline.
+        Due to the nature of an automated 24-hour data collection cycle, some Level 3 products may still be
+        processing at the time data is collected. This results in a given input file containing groups of L1
+        exposures with no matching L3 product. JwstCalIngest will run preprocessing on all L1 inputs and attempt 
+        to match them with an L3 product in the same file. Any complete datasets (where a match is identified) are
+        inserted into the "database", a file called `preprocessed.csv`. Any remaining L1 exposures that did not 
+        find a match are stored into a separate "table" called `ingest.csv`. The next time this ingest process
+        is run, the script will load both the new data as well as prior (unmatched) data. The assumption here is
+        that the missing L3 product(s) (and sometimes even additional L1 exposures for this association) will 
+        eventually complete the pipeline and show up in subsequent files.
+
+        Additional output files are model-specific encoded subsets of `preprocessed` and `ingest`. Data is inserted
+        into these in the same manner as appropriate. The actual files to be used for model training are named as
+        "train-{modelname}.csv", while `preprocessed.csv` contains all the original columns with unencoded values
+        and is intended to be used primarily for data analysis and debugging purposes.
+
+        Database: {outpath}
+
+        Tables: {.csv files}
+
+            Accumulated data storing unencoded values
+            - preprocessed:  complete L1-L3 groupings
+            - ingest: unmatched L1 exposures
+
+            Encoded datasets finalized and ready for model training (input features + y-targets)
+            - train-image: L3 image model
+            - train-spec: L3 spectroscopy model
+            - train-tac: L3 TSO/AMI/CORON model
+
+            Encoded input features of remaining L1 exposures (y-targets pending)
+            - rem-image.csv
+            - rem-spec.csv
+            - rem-tac.csv
+
+
+        Parameters
+        ----------
+        input_path : str (path), optional
+            directory path to csv files on local disk, by default None (current working directory)
+        pfx : str, optional
+            filename start pattern (e.g. "2023" or "*-12-), by default ""
+        outpath : str (path), optional
+            directory path to save (and/or update) preprocessed files on local disk, by default None (current working directory)
+        """
         self.input_path = input_path
         self.pfx = pfx
         self.outpath = input_path if outpath is None else outpath
-        self.batch_id = batch_id
         self.exp_types = ["IMAGE", "SPEC", "TAC"]
         self.files = []
         self.idxcol = "Dataset"
@@ -202,7 +260,7 @@ class JwstCalIngest:
         self.rem = {}
         self.param_cols = ['pid', 'OBSERVTN', 'FILTER', 'GRATING', 'PUPIL', 'EXP_TYPE']
         self.scrb = None
-        self.__name__ = name
+        self.__name__ = "JwstCalIngest"
         self.log = Logger(self.__name__, **log_kws).spacekit_logger()
         # TEMP #
         self.log.console_log_level = "DEBUG"
@@ -212,12 +270,12 @@ class JwstCalIngest:
         if len(self.files) == 0:
             return
         self.initial_scrub()
-        self.scrub_exposures()
-        self.run_matching()
-        self.drop_incomplete_data()
-        self.convert_imagesize_units()
         if extrapolate is True:
             self.extrapolate_datasets(fpath=None)
+        self.scrub_exposures()
+        self.run_matching()
+        self.drop_unmatched_data()
+        self.convert_imagesize_units()
         self.save_training_sets()
     
     def read_files(self):
