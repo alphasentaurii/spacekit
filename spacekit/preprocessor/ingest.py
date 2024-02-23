@@ -425,12 +425,9 @@ class JwstCalIngest:
         mosaics = self.df.loc[self.df['mosaic']].copy()
         if len(mosaics) > 0:
             mpath = f"{self.outpath}/mosaics.csv"
-            if os.path.exists(mpath):
-                prior = pd.read_csv(mpath, index_col=self.idxcol)
-                mosaics = pd.concat([prior, mosaics], axis=0)
+            kwargs = dict(mode='a', index=False, header=False) if os.path.exists(mpath) else dict(index=False)
             mosaics[self.idxcol] = mosaics.index
-            mosaics.drop_duplicates(subset=self.idxcol, keep='last', inplace=True)
-            mosaics.to_csv(mpath, index=False)
+            mosaics.to_csv(mpath, **kwargs)
             self.log.info(f"Mosaic data saved to: {mpath}")
             self.log.info(f"Dropping {len(mosaics.index)} mosaics from ingest data")
             self.df.drop(mosaics.index, axis=0, inplace=True)
