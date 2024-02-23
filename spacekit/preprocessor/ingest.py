@@ -335,6 +335,7 @@ class JwstCalIngest:
             self.df['OBSERVTN'] = self.df['OBSERVTN'].apply(lambda x: self.validate_obs(x))
             self.df['PROGRAM'] = self.df['PROGRAM'].apply(lambda x: '{:0>5}'.format(x))
             self.update_dags()
+            self.df.drop_duplicates(subset='dname', keep='first', inplace=True)
         except Exception as e:
             self.log.error(str(e))
 
@@ -375,14 +376,15 @@ class JwstCalIngest:
     def drop_duplicates(self, priority='imagesize'):
         if priority is None:
             self.df.drop_duplicates(subset='dname', inplace=True)
+            return
         dupes = sorted(list(self.df.loc[self.df.duplicated(subset='dname')].index))
         self.df.loc[dupes, 'dupe'] = True
         self.df.loc[self.df.dupe.isna(), 'dupe'] = False
         for d in dupes:
-            imgmax = self.df.loc[d]['imagesize'].max()
-            self.df.loc[(self.df.dname == d) & (self.df['imagesize'] == imgmax), 'dupe'] = False
+            max_priority = self.df.loc[d][priority].max()
+            self.df.loc[(self.df.dname == d) & (self.df[priority] == max_priority), 'dupe'] = False
         self.df.reset_index(inplace=True)
-        self.log.info(f"Dropping {len(dupes)} duplicates (priority=imagesize)")
+        self.log.info(f"Dropping {len(dupes)} duplicates (priority={priority})")
         self.df.drop(self.df.loc[self.df.dupe].index, axis=0, inplace=True)
         self.df.drop('dupe', axis=1, inplace=True)
         if len(sorted(list(self.df.loc[self.df.duplicated(subset='dname')].index))) > 0:
