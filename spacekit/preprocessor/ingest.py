@@ -182,8 +182,6 @@ class SvmAlignmentIngest:
                 )
 
 
-
-
 class JwstCalIngest:
     def __init__(self, input_path=None, pfx="", outpath=None, **log_kws):
         """Loads raw JWST Calibration Pipeline metadata from local disk (`input_path`)
@@ -191,8 +189,16 @@ class JwstCalIngest:
         dataframes will be "ingested" into any pre-existing training sets located in `outpath`. 
         This outpath acts as the primary database containing several "tables" (dataframes stored
         in .csv files). This class is designed to run on single or multiple files at a time 
-        (limit specificity using 'pfx`). The contents of the raw metadata files are expected
-        to contain:
+        (limit specificity using 'pfx`). 
+
+        Input file naming convention: YYYY-MM-DD_%d.csv (%d = day of year) ex: 2024-02-21_052.csv
+        Alternate formats currently not supported because filenames are used to store date info.
+        Examples: To ingest multiple files from November 2023, set `pfx="2023-11". To ingest only
+        one file from January 3, 2024, set `pfx="2024-01-03". You can also pass in a wildcard, for
+        example `pfx="*_3" would search for all data collected on days 300-365 of any year,
+        while `pfx="2023*_3" would do the same but only for the year 2023.
+
+        The contents of raw metadata files are expected to contain:
  
             1) columns consistent with Fits header keyword-values used in JWST Cal model training 
             (see `spacekit.skopes.jwst.cal.config`) 
@@ -224,6 +230,7 @@ class JwstCalIngest:
             Accumulated data storing unencoded values
             - preprocessed:  complete L1-L3 groupings
             - ingest: unmatched L1 exposures
+            - mosaics: c1XXX association candidate L3 products (currently not supported)
 
             Encoded datasets finalized and ready for model training (input features + y-targets)
             - train-image: L3 image model
@@ -235,7 +242,6 @@ class JwstCalIngest:
             - rem-spec.csv
             - rem-tac.csv
 
-
         Parameters
         ----------
         input_path : str (path), optional
@@ -245,13 +251,13 @@ class JwstCalIngest:
         outpath : str (path), optional
             directory path to save (and/or update) preprocessed files on local disk, by default None (current working directory)
         """
-        self.input_path = input_path
+        self.input_path = input_path.rstrip("/")
         self.pfx = pfx
-        self.outpath = input_path if outpath is None else outpath
+        self.outpath = input_path if outpath is None else outpath.rstrip("/")
         self.exp_types = ["IMAGE", "SPEC", "TAC"]
         self.files = []
         self.idxcol = "Dataset"
-        self.dagcol = "DagNodeName"
+        self.dag = "DagNodeName"
         self.df = None
         self.l1_dags = []
         self.l3_dags = []
@@ -260,44 +266,26 @@ class JwstCalIngest:
         self.rem = {}
         self.param_cols = ['pid', 'OBSERVTN', 'FILTER', 'GRATING', 'PUPIL', 'EXP_TYPE']
         self.scrb = None
+        self.trainpath = self.outpath + "/train-{}.csv"
+        self.rempath =  self.outpath + "/rem-{}.csv"
         self.__name__ = "JwstCalIngest"
         self.log = Logger(self.__name__, **log_kws).spacekit_logger()
         # TEMP #
         self.log.console_log_level = "DEBUG"
 
-    def run_ingest(self, extrapolate=True, file_suffix=""):
+    def run_ingest(self, apriori=True):
         self.ingest_data()
         if len(self.files) == 0:
             return
         self.initial_scrub()
-        if extrapolate is True:
-            self.extrapolate_datasets(fpath=None)
+        if apriori is True:
+            self.load_priors()
         self.scrub_exposures()
-        self.run_matching()
-        self.drop_unmatched_data()
+        self.extrapolate()
+        self.drop_unmatched()
         self.convert_imagesize_units()
+        self.save_ingest_data()
         self.save_training_sets()
-    
-    def read_files(self):
-        if self.input_path is None:
-            self.input_path = os.getcwd()
-        pattern = f"{self.input_path}/{self.pfx}*.csv"
-        files = sorted(glob.glob(pattern))
-        self.files = [f for f in files if f not in self.files]
-        if len(self.files) < 1:
-            self.log.warning(f"No files found using pattern: {pattern}")
-        else:
-            self.log.debug(f"Files ready for ingest: {self.files}")
-
-    def drop_level2(self, df):
-        alldags = sorted(list(df[self.dagcol].value_counts().index))
-        l1_dags = [d for d in alldags if '1' in d]
-        l3_dags = [d for d in alldags if '3' in d]
-        dags_l1_l3 = l1_dags + l3_dags
-        df = df.loc[df[self.dagcol].isin(dags_l1_l3)]
-        self.l1_dags.extend([l for l in l1_dags if l not in self.l1_dags])
-        self.l3_dags.extend([l for l in l3_dags if l not in self.l3_dags])
-        return df
 
     def ingest_data(self):
         self.read_files()
@@ -313,33 +301,76 @@ class JwstCalIngest:
             else:
                 self.df = pd.concat([self.df, df], axis=0)
 
-    def strip_file_suffix(self, x):
-        if x.endswith("fits"):
-            x = '_'.join(x.split('_')[:-1])
-        return x
+    def read_files(self):
+        if self.input_path is None:
+            self.input_path = os.getcwd()
+        pattern = f"{self.input_path}/{self.pfx}*.csv"
+        files = sorted(glob.glob(pattern))
+        self.files = [f for f in files if f not in self.files]
+        if len(self.files) < 1:
+            self.log.warning(f"No files found using pattern: {pattern}")
+        else:
+            self.log.debug(f"Files ready for ingest: {self.files}")
 
-    def extract_pid(self, x):
-        if not isinstance(x, str):
-            return x
-        pid = x[2:7]
-        if pid[0] == '0':
-            pid = pid[1:]
-        return int(pid)
+    def drop_level2(self, df):
+        alldags = sorted(list(df[self.dag].value_counts().index))
+        l1_dags = [d for d in alldags if '1' in d]
+        l3_dags = [d for d in alldags if '3' in d]
+        dags_l1_l3 = l1_dags + l3_dags
+        df = df.loc[df[self.dag].isin(dags_l1_l3)]
+        self.l1_dags.extend([l for l in l1_dags if l not in self.l1_dags])
+        self.l3_dags.extend([l for l in l3_dags if l not in self.l3_dags])
+        return df
 
-    def convert_to_float(self, x):
-        if x != "NONE":
-            return float(x)
+    def load_priors(self, fname="ingest.csv"):
+        ingest_file = os.path.join(self.outpath, fname)
+        if not os.path.exists(ingest_file):
+            self.log.debug("Prior data not found -- skipping.")
+            return None
+        self.log.info("Collecting prior data")
+        di = pd.read_csv(ingest_file, index_col=self.idxcol)
+        try:
+            self.df = pd.concat([self.df, di], axis=0)
+            self.log.info(f"Prior data loaded successfully: {len(di)} exposures added.")
+            self.df['OBSERVTN'] = self.df['OBSERVTN'].apply(lambda x: self.validate_obs(x))
+            self.df['PROGRAM'] = self.df['PROGRAM'].apply(lambda x: '{:0>5}'.format(x))
+            self.update_dags()
+        except Exception as e:
+            self.log.error(str(e))
 
-    # def validate_obs(self, x):
-    #     if len(str(x)) <= 3:
-    #         return '{:0>3}'.format(x)
+    def update_dags(self):
+        alldags = sorted(list(self.df[self.dag].value_counts().index))
+        self.l1_dags = [d for d in alldags if '1' in d]
+        self.l3_dags = [d for d in alldags if '3' in d]
 
-    def mark_mosaics(self, x):
-        if len(x.split('-')) < 2:
-            return False
-        elif x.split('-')[1][0] != 'c':
-            return False
-        return True
+    def initial_scrub(self):
+        if self.df is None:
+            return
+        self.df['dname'] = self.df.index
+        self.df['dname'] = self.df['dname'].apply(lambda x: self.strip_file_suffix(x))
+        self.df.rename({'ImageSize':'imagesize', self.dag: 'dag'}, axis=1, inplace=True)
+        self.dag = 'dag'
+        self.drop_duplicates()
+        self.df.set_index('dname', drop=False, inplace=True)
+        self.df['pid'] = self.df['dname'].apply(lambda x: self.extract_pid(x))
+        self.df['OBSERVTN'] = self.df['OBSERVTN'].apply(lambda x: self.validate_obs(x))
+        self.df['PROGRAM'] = self.df['PROGRAM'].apply(lambda x: '{:0>5}'.format(x))
+        params = list(map(lambda x: '-'.join([str(y) for y in x if y != "NONE"]),  self.df[self.param_cols].values))
+        self.df['params'] = pd.DataFrame(params, index=self.df.index)
+        float_cols = [
+            'CRVAL1',
+            'CRVAL2',
+            'RA_REF',
+            'DEC_REF',
+            'GS_RA',
+            'GS_DEC',
+            'TARG_RA',
+            'TARG_DEC'
+        ]
+        for col in float_cols:
+            self.df[col] = self.df[col].apply(lambda x: self.convert_to_float(x))
+        self.drop_mosaics()
+        self.df.drop('Dataset', axis=1, inplace=True)
 
     def drop_duplicates(self, priority='imagesize'):
         if priority is None:
@@ -357,47 +388,64 @@ class JwstCalIngest:
         if len(sorted(list(self.df.loc[self.df.duplicated(subset='dname')].index))) > 0:
             self.df.drop_duplicates(subset='dname', inplace=True)
 
-    def extract_obs(self, x):
-        pfx = x.split('_')[0]
-        pfx2 = pfx.split('-')
-        if len(pfx2) > 1:
-            obs = pfx2[1][1:]
-        else:
-            obs = pfx[7:10]
-        return obs
+    @staticmethod
+    def strip_file_suffix(x):
+        if x.endswith("fits"):
+            x = '_'.join(x.split('_')[:-1])
+        return x
 
-    def initial_scrub(self):
-        self.df['dname'] = self.df.index
-        self.df['dname'] = self.df['dname'].apply(lambda x: self.strip_file_suffix(x))
-        self.df.rename({'ImageSize':'imagesize'}, axis=1, inplace=True)
-        self.drop_duplicates()
-        self.df.set_index('dname', drop=False, inplace=True)
-        self.df['pid'] = self.df['dname'].apply(lambda x: self.extract_pid(x))
-        self.df['OBSERVTN'] = self.df['OBSERVTN'].apply(lambda x: '{:0>3}'.format(x))
-        params = list(map(lambda x: '-'.join([str(y) for y in x if y != "NONE"]),  self.df[self.param_cols].values))
-        self.df['params'] = pd.DataFrame(params, index=self.df.index)
-        float_cols = [
-            'CRVAL1',
-            'CRVAL2',
-            'RA_REF',
-            'DEC_REF',
-            'GS_RA',
-            'GS_DEC',
-            'TARG_RA',
-            'TARG_DEC'
-        ]
-        for col in float_cols:
-            self.df[col] = self.df[col].apply(lambda x: self.convert_to_float(x))
-        self.drop_mosaics()
+    @staticmethod
+    def extract_pid(x):
+        if not isinstance(x, str):
+            return x
+        pid = x[2:7]
+        if pid[0] == '0':
+            pid = pid[1:]
+        return int(pid)
 
+    @staticmethod
+    def validate_obs(x):
+        return '{:0>3}'.format(x)
+
+    @staticmethod
+    def convert_to_float(x):
+        if x != "NONE":
+            return float(x)
+
+    @staticmethod
+    def mark_mosaics(x):
+        if len(x.split('-')) < 2:
+            return False
+        elif x.split('-')[1][0] != 'c':
+            return False
+        return True
+
+    def drop_mosaics(self):
+        self.df['mosaic'] = self.df['dname'].apply(lambda x: self.mark_mosaics(x))
+        mosaics = self.df.loc[self.df['mosaic']].copy()
+        if len(mosaics) > 0:
+            mpath = f"{self.outpath}/mosaics.csv"
+            if os.path.exists(mpath):
+                prior = pd.read_csv(mpath, index_col=self.idxcol)
+                mosaics = pd.concat([prior, mosaics], axis=0)
+            mosaics[self.idxcol] = mosaics.index
+            mosaics.drop_duplicates(subset=self.idxcol, keep='last', inplace=True)
+            mosaics.to_csv(mpath, index=False)
+            self.log.info(f"Mosaic data saved to: {mpath}")
+            self.log.info(f"Dropping {len(mosaics.index)} mosaics from ingest data")
+            self.df.drop(mosaics.index, axis=0, inplace=True)
+        self.df.drop('mosaic', axis=1, inplace=True)
 
     def scrub_exposures(self):
         self.scrb = JwstCalScrubber(
                 self.input_path,
-                data=self.df.loc[self.df[self.dagcol].isin(self.l1_dags)],
+                data=self.df.loc[self.df[self.dag].isin(self.l1_dags)],
                 encoding_pairs=KEYPAIR_DATA,
                 mode='df'
             )
+        nonsci = self.df.loc[~self.df['EXP_TYPE'].isin(self.scrb.level3_types)]
+        self.df.drop(nonsci.index, axis=0, inplace=True)
+        self.log.info(f"Dropped {len(nonsci)} non-L3 exposure types")
         for exp_type in self.exp_types:
             inputs = self.scrb.scrub_inputs(exp_type=exp_type)
             if inputs is not None:
@@ -409,7 +457,7 @@ class JwstCalIngest:
         data = [self.scrb.imgpix, self.scrb.specpix, self.scrb.tacpix, self.scrb.fgspix]
         return map(lambda x: pd.DataFrame.from_dict(x, orient='index'), data)
 
-    def run_matching(self):
+    def extrapolate(self):
         for exp_type in self.exp_types:
             self.match_product_groups(exp_type)
 
@@ -422,7 +470,7 @@ class JwstCalIngest:
                 (
                     self.df['params'] == info['params']
                 ) & (
-                    self.df['DagNodeName'].isin(self.l3_dags)
+                    self.df[self.dag].isin(self.l3_dags)
                 )
             ]
             if len(l3) == 0:
@@ -451,22 +499,7 @@ class JwstCalIngest:
             self.df.loc[self.df.dname.isin(exposures), 'pname'] = pname
             self.df.loc[pname, 'pwild'] = k
 
-    def drop_mosaics(self):
-        self.df['mosaic'] = self.df['dname'].apply(lambda x: self.mark_mosaics(x))
-        mosaics = self.df.loc[self.df['mosaic']]
-        if len(mosaics) > 0:
-            mpath = f"{self.outpath}/mosaics.csv"
-            if os.path.exists(mpath):
-                prior = pd.read_csv(mpath, index_col=self.idxcol)
-                mosaics = pd.concat([mosaics, prior], axis=0)
-            mosaics.loc[:, self.idxcol] = mosaics.index
-            mosaics.to_csv(mosaics, index=False)
-            self.log.info(f"Mosaic data saved to: {mpath}")
-            self.log.info(f"Dropping {len(mosaics.index)} mosaics from ingest data")
-            self.df.drop(mosaics.index, axis=0, inplace=True)
-        self.df.drop('mosaic', axis=1, inplace=True)
-
-    def drop_unmatched_data(self):
+    def drop_unmatched(self):
         for exp_type in list(self.data.keys()):
             try:
                 if 'imagesize' in self.data[exp_type].columns:
@@ -486,79 +519,35 @@ class JwstCalIngest:
             except KeyError:
                 continue
 
-
-    def update_dags(self):
-        alldags = sorted(list(self.df[self.dagcol].value_counts().index))
-        self.l1_dags = [d for d in alldags if '1' in d]
-        self.l3_dags = [d for d in alldags if '3' in d]
-
-    #TODO
-    def extrapolate_datasets(self, fpath=None):
-        """
-        #TODO
-        1. load priors (unmatched L1): ingest.csv
-        2. scrape new data file
-        3. initial scrub on new data
-        4. combine new data with priors
-        5. scrub combined datasets
-        6. run matching
-        7. append/update training data: preprocessed.csv, train-{exp}.csv
-        8. separate matched/unmatched and save/overwrite: ingest.csv, rem-{exp}.csv
-        """
-        fpath = self.outpath if fpath is None else fpath
-        df = pd.read_csv(f"{fpath}/ingest.csv")
-        df.set_index('dname', drop=False, inplace=True)
-        self.df = pd.concat([self.df, df], axis=0)
-        
-        for exp_type in self.exp_types:
-            fp_train = glob.glob(f"{fpath}/train-{exp_type.lower()}.csv")
-            fp_rem = glob.glob(f"{fpath}/rem-{exp_type.lower()}.csv")
-            if fp_train:
-                data = pd.read_csv(fp_train[0], index_col=self.idxcol)
-                if len(self.data[exp_type]) > 0:
-                    self.data[exp_type] = pd.concat([self.data[exp_type], data], axis=0)
-                else:
-                    self.data[exp_type] = data.copy()
-            if fp_rem:
-                rem = pd.read_csv(fp_rem[0], index_col=self.idxcol)
-                if len(self.rem[exp_type]) > 0:
-                    self.rem[exp_type] = pd.concat([self.rem[exp_type], rem], axis=0)
-                else:
-                    self.rem[exp_type] = rem.copy()
-
-        self.update_dags()
-        params = list(self.df.loc[(self.df.pname.isna()) & (self.df.DagNodeName.isin(self.l1_dags))].params.unique())
-        matched_params = {}
-        for param in params:
-            l3m = self.df.loc[(self.df.params == param) & (self.df.DagNodeName.isin(self.l3_dags))]
-            if len(l3m) > 0:
-                self.log.debug(f"MATCH: {param}")
-                matched_params[param] = dict(pname=l3m.dname.values[0], imagesize=l3m.imagesize.values[0])
-                # TODO
-        if matched_params:
-            for param, data in matched_params.items():
-                pass
-
-    def save_ingest_data(self):
-        self.drop_combined_products()
-        dpath = f"{self.outpath}/ingest.csv"
-        self.df[self.idxcol] = self.df.index
-        self.df.to_csv(dpath, index=False)
-        self.log.info(f"Ingest (raw) data saved to: {dpath}")
-
+ 
     def save_training_sets(self):
-        for exp_type in self.data.keys():
-            data = self.data[exp_type].copy()
-            data[self.idxcol] = data.index
-            fpath = f"{self.outpath}/train-{exp_type.lower()}.csv"
-            data.to_csv(fpath, index=False)
-            self.log.info(f"{exp_type} training data saved to: {fpath}")
-            if exp_type in list(self.rem.keys()):
-                rpath = f"{self.outpath}/rem-{exp_type.lower()}.csv"
+        for exp_type in self.exp_types:
+            if exp_type in self.data.keys() and len(self.data[exp_type]) > 0:
+                fpath = self.trainpath.format(exp_type.lower())
+                self.data[exp_type][self.idxcol] = self.data[exp_type].index
+                kwargs = dict(mode='a', index=False, header=False) if os.path.exists(fpath) else dict(index=False)
+                self.data[exp_type].to_csv(fpath, **kwargs)
+                self.log.info(f"{exp_type} training data saved to: {fpath}")
+            if exp_type in self.rem.keys() and len(self.rem[exp_type]) > 0:
+                rpath = self.rempath.format(exp_type.lower())
                 self.rem[exp_type][self.idxcol] = self.rem[exp_type].index
                 self.rem[exp_type].to_csv(rpath, index=False)
                 self.log.info(f"Remaining {exp_type} data saved to: {rpath}")
-        self.save_ingest_data()
+
+    def save_ingest_data(self):
+        self.df[self.idxcol] = self.df.index
+        di = self.df.loc[self.df.pname.isna()].copy()
+        di.drop(['pwild', 'pname'], axis=1, inplace=True)
+        ingest_file = f"{self.outpath}/ingest.csv"
+        di.to_csv(ingest_file, index=False)
+        self.log.info(f"Remaining Ingest data saved to: {ingest_file}")
+
+        dp = self.df.drop(di.index, axis=0)
+        dp.drop('pwild', axis=1, inplace=True)
+        ppath = f"{self.outpath}/preprocessed.csv"
+        kwargs = dict(mode='a', index=False, header=False) if os.path.exists(ppath) else dict(index=False)
+        dp.to_csv(ppath, **kwargs)
+        self.log.info(f"Preprocessed training data saved to: {ppath}")
 
 
 if __name__ == "__main__":

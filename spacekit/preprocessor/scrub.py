@@ -562,21 +562,19 @@ class JwstCalScrubber(Scrubber):
         self.sfx = sfx
         super().__init__(
             data=data,
-            col_order=self.xcol_order(),
+            col_order=self.xcol_order,
             dropnans=dropnans,
             save_raw=save_raw,
             name="JwstCalScrubber",
             **log_kws,
         )
-        self.xcols = self.xcol_order()
+        self.xcols = self.xcol_order
         self.encoding_pairs = encoding_pairs
         self.mode = mode
         self.coron_ami = ["MIR_4QPM", "MIR_LYOT", "NRC_CORON", "NIS_AMI"]
         self.scrape_inputs()
         self.get_level3_products()
         self.pixel_offsets()
-
-
 
     @property
     def xcol_order(self):
@@ -654,7 +652,6 @@ class JwstCalScrubber(Scrubber):
             "NRS_MSASPEC",
             "NRS_BRIGHTOBJ",  # TSO always
         ]
-
 
     @property
     def expdata(self):
@@ -887,7 +884,7 @@ class JwstCalScrubber(Scrubber):
         pd.DataFrame
             preprocessed data with renamed columns, NaNs scrubbed and categorical data encoded
         """
-        data = self.input_data()[exp_type]
+        data = self.input_data[exp_type]
         if not data:
             return None
         # Set df as attr to utilize super methods
