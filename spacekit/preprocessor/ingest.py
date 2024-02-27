@@ -10,8 +10,6 @@ from spacekit.preprocessor.scrub import HstSvmScrubber, JwstCalScrubber
 from spacekit.generator.draw import DrawMosaics
 from spacekit.analyzer.track import timer, record_metrics
 from spacekit.skopes.jwst.cal.config import KEYPAIR_DATA
-from spacekit.extractor.radio import JwstCalRadio
-
 
 
 class SvmAlignmentIngest:
