@@ -567,6 +567,7 @@ class JwstCalIngest:
             self.log.warning("Could not update repro data - file not found.")
             return
         updates = {}
+        notrepro = []
         pnames = list(l3.index)
         for pname in pnames:
             try:
@@ -576,6 +577,7 @@ class JwstCalIngest:
                 else:
                     updates[expmode].append(pname)
             except KeyError:
+                notrepro.append(pname)
                 continue
         for exp_type, pnames in updates.items():
             repro = dict()
@@ -597,8 +599,9 @@ class JwstCalIngest:
             self.log.info(f"Updated {len(repro)} reprocessed {exp_type} products.")
         dp[self.idxcol] = dp.index
         dp.to_csv(f"{self.outpath}/training.csv", index=False)
+        l3 = l3.loc[~l3.dname.isin(notrepro)]
         self.df.drop(l3.index, axis=0, inplace=True)
-        self.log.info(f"Preprocessed file updated and L3 repro products removed from dataframe.")
+        self.log.info(f"Preprocessed file updated and {len(l3)} L3 repro products removed from dataframe.")
 
     def save_training_sets(self):
         for exp_type in self.exp_types:
