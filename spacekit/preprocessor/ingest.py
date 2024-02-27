@@ -376,6 +376,7 @@ class JwstCalIngest:
     def initial_scrub(self):
         if self.df is None:
             return
+        self.log.info(f"{len(self.df)} datasets loaded")
         self.df['dname'] = self.df.index
         self.df['dname'] = self.df['dname'].apply(lambda x: self.strip_file_suffix(x))
         self.df.rename({'ImageSize':'imagesize', self.dag: 'dag'}, axis=1, inplace=True)
