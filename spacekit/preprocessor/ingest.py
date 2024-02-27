@@ -478,6 +478,9 @@ class JwstCalIngest:
         self.drop_extras("SPEC")
         self.drop_unmatched()
         self.convert_imagesize_units()
+        if 'pname' not in self.df.columns:
+            self.log.debug("No L3 candidates to match")
+            return
         self.update_repro()
 
     def match_product_groups(self, exp_type):
