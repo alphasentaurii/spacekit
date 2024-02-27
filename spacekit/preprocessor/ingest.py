@@ -634,10 +634,17 @@ class JwstCalIngest:
 
 if __name__ == "__main__":
     parser = ArgumentParser.parse_args(
-        prog="spacekit", usage="spacekit.preprocessor.ingest input_path [options: --skope, -p, -s, -e]"
+        prog="spacekit", usage="spacekit.preprocessor.ingest input_path [options: --skope, -p, -o]"
     )
     parser.add_argument("input_path", type=str, help="")
     parser.add_argument("--skope", type=str, default="jwst", help="")
-    parser.add_argument("-p", "--pfx", type=str, default="", help="file name prefix to limit search on local disk")
-    parser.add_argument("-s", "--sfx", type=str, default=".csv", help="file name suffix to limit search on local disk")
-    parser.add_argument("-e", "--extra_data", type=str, default=None, help="")
+    parser.add_argument("--pfx", "-p", type=str, default="", help="file name prefix to limit search on local disk")
+    parser.add_argument("--outpath", "-o", type=str, default=None, help="path to save preprocessed ingest files on local disk")
+    parser.add_argument("--apriori", "-a", type=bool, default=True, help="include prior unmatched L1 data from outpath")
+    parser.add_argument("--level1", "-l", type=bool, default=True, help="save matched level 1 input data to separate file")
+    args = parser.parse_args()
+    if args.skope.lower() == "jwst":
+        os.makedirs(args.outpath, exist_ok=True)
+        kwargs = dict(input_path=args.input_path, pfx=args.pfx, outpath=args.outpath)
+        jc = JwstCalIngest(**kwargs)
+        jc.run_ingest(apriori=args.apriori, save_l1=args.level1)
