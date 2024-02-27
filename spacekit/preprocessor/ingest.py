@@ -615,24 +615,29 @@ class JwstCalIngest:
 
     def save_ingest_data(self, save_l1=True):
         self.df[self.idxcol] = self.df.index
-        di = self.df.loc[self.df.pname.isna()].copy()
-        di.drop(['pname'], axis=1, inplace=True)
         ingest_file = f"{self.outpath}/ingest.csv"
+        if 'pname' not in self.df.columns:
+            di = self.df.loc[self.df.dag.isin(self.l1_dags)]
+        else:
+            di = self.df.loc[self.df.pname.isna()].copy()
+            di.drop(['pname'], axis=1, inplace=True)
+        
         di.to_csv(ingest_file, index=False)
         self.log.info(f"Remaining Ingest data saved to: {ingest_file}")
 
         dp = self.df.drop(di.index, axis=0)
-        if save_l1 is True:
-            l1 = dp.loc[dp.dag.isin(self.l1_dags)]
-            l1_path = f"{self.outpath}/level1.csv"
-            kwargs = dict(mode='a', index=False, header=False) if os.path.exists(l1_path) else dict(index=False)
-            l1.to_csv(l1_path, **kwargs)
+        if len(dp) > 0:
+            if save_l1 is True:
+                l1 = dp.loc[dp.dag.isin(self.l1_dags)]
+                l1_path = f"{self.outpath}/level1.csv"
+                kwargs = dict(mode='a', index=False, header=False) if os.path.exists(l1_path) else dict(index=False)
+                l1.to_csv(l1_path, **kwargs)
 
-        dp = dp.loc[dp.dag.isin(self.l3_dags)]
-        ppath = f"{self.outpath}/training.csv"
-        kwargs = dict(mode='a', index=False, header=False) if os.path.exists(ppath) else dict(index=False)
-        dp.to_csv(ppath, **kwargs)
-        self.log.info(f"{len(dp)} L3 products added to: {ppath}")
+            dp = dp.loc[dp.dag.isin(self.l3_dags)]
+            ppath = f"{self.outpath}/training.csv"
+            kwargs = dict(mode='a', index=False, header=False) if os.path.exists(ppath) else dict(index=False)
+            dp.to_csv(ppath, **kwargs)
+            self.log.info(f"{len(dp)} L3 products added to: {ppath}")
 
 
 if __name__ == "__main__":
