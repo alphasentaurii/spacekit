@@ -269,8 +269,6 @@ class JwstCalIngest:
         self.rempath =  self.outpath + "/rem-{}.csv"
         self.__name__ = "JwstCalIngest"
         self.log = Logger(self.__name__, **log_kws).spacekit_logger()
-        # TEMP #
-        self.log.console_log_level = "DEBUG"
 
     @property
     def float_cols(self):
@@ -365,8 +363,6 @@ class JwstCalIngest:
         try:
             self.df = pd.concat([self.df, di], axis=0)
             self.log.info(f"Prior data loaded successfully: {len(di)} exposures added.")
-            # self.df['OBSERVTN'] = self.df['OBSERVTN'].apply(lambda x: self.validate_obs(x))
-            # self.df['PROGRAM'] = self.df['PROGRAM'].apply(lambda x: '{:0>5}'.format(x))
             self.update_dags()
             self.df.drop_duplicates(subset='dname', keep='first', inplace=True)
         except Exception as e:
@@ -388,12 +384,8 @@ class JwstCalIngest:
         self.df.set_index('dname', drop=False, inplace=True)
         self.df['pid'] = self.df['dname'].apply(lambda x: self.extract_pid(x))
         self.df = self.recast_dtypes(self.df)
-        # self.df['OBSERVTN'] = self.df['OBSERVTN'].apply(lambda x: self.validate_obs(x))
-        # self.df['PROGRAM'] = self.df['PROGRAM'].apply(lambda x: '{:0>5}'.format(x))
         params = list(map(lambda x: '-'.join([str(y) for y in x if y != "NONE"]),  self.df[self.param_cols].values))
         self.df['params'] = pd.DataFrame(params, index=self.df.index)
-        # for col in self.float_cols:
-        #     self.df[col] = self.df[col].apply(lambda x: self.convert_to_float(x))
         self.drop_mosaics()
         self.df.drop('Dataset', axis=1, inplace=True)
 
@@ -548,12 +540,6 @@ class JwstCalIngest:
                 self.data[exp_type].drop(self.rem[exp_type].index, axis=0, inplace=True)
             except KeyError:
                 continue
-        # *** TEMP *** #
-        if len(self.rem['TAC']) > 0:
-            for t in list(self.rem['TAC'].index):
-                n = len(self.scrb.expdata['TAC'][t])
-                self.rem['TAC'].loc[t, 'nexposur'] = n
-         # *** TEMP *** #
 
     def convert_imagesize_units(self, data=None):
         if data is not None:
@@ -633,7 +619,6 @@ class JwstCalIngest:
         self.log.info(f"Remaining Ingest data saved to: {ingest_file}")
 
         dp = self.df.drop(di.index, axis=0)
-        
         if save_l1 is True:
             l1 = dp.loc[dp.dag.isin(self.l1_dags)]
             l1_path = f"{self.outpath}/level1.csv"
