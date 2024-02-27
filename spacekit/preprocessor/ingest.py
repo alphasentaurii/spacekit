@@ -633,7 +633,7 @@ class JwstCalIngest:
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser.parse_args(
+    parser = ArgumentParser(
         prog="spacekit", usage="spacekit.preprocessor.ingest input_path [options: --skope, -p, -o]"
     )
     parser.add_argument("input_path", type=str, help="")
