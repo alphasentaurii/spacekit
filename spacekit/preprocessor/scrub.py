@@ -686,7 +686,8 @@ class JwstCalScrubber(Scrubber):
         sky.set_keys(ra="RA_REF", dec="DEC_REF")
         self.specpix = sky.calculate_offsets(self.spec_products)
         self.products.update(self.specpix)
-        sky.count_exposures = False  # use fits data
+        if self.mode != 'df': # use fits data
+            sky.count_exposures = False
         self.tacpix = sky.calculate_offsets(self.tac_products)
         self.products.update(self.tacpix)
         self.update_fgs()

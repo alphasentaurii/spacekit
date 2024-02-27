@@ -212,7 +212,7 @@ class JwstCalIngest:
         processing at the time data is collected. This results in a given input file containing groups of L1
         exposures with no matching L3 product. JwstCalIngest will run preprocessing on all L1 inputs and attempt 
         to match them with an L3 product in the same file. Any complete datasets (where a match is identified) are
-        inserted into the "database", a file called `preprocessed.csv`. Any remaining L1 exposures that did not 
+        inserted into the "database", a file called `training.csv`. Any remaining L1 exposures that did not 
         find a match are stored into a separate "table" called `ingest.csv`. The next time this ingest process
         is run, the script will load both the new data as well as prior (unmatched) data. The assumption here is
         that the missing L3 product(s) (and sometimes even additional L1 exposures for this association) will 
@@ -220,7 +220,7 @@ class JwstCalIngest:
 
         Additional output files are model-specific encoded subsets of `preprocessed` and `ingest`. Data is inserted
         into these in the same manner as appropriate. The actual files to be used for model training are named as
-        "train-{modelname}.csv", while `preprocessed.csv` contains all the original columns with unencoded values
+        "train-{modelname}.csv", while `training.csv` contains all the original columns with unencoded values
         and is intended to be used primarily for data analysis and debugging purposes.
 
         Database: {outpath}
@@ -263,8 +263,9 @@ class JwstCalIngest:
         self.l3_dags = []
         self.data = {}
         self.product_matches = None
+        self.exmatches = {}
         self.rem = {}
-        self.param_cols = ['pid', 'OBSERVTN', 'FILTER', 'GRATING', 'PUPIL', 'EXP_TYPE']
+        self.param_cols = ['pid', 'OBSERVTN', 'FILTER', 'GRATING', 'PUPIL', 'SUBARRAY', 'EXP_TYPE']
         self.scrb = None
         self.trainpath = self.outpath + "/train-{}.csv"
         self.rempath =  self.outpath + "/rem-{}.csv"
@@ -273,7 +274,23 @@ class JwstCalIngest:
         # TEMP #
         self.log.console_log_level = "DEBUG"
 
-    def run_ingest(self, apriori=True):
+    @property
+    def float_cols(self):
+        return self._float_cols()
+
+    def _float_cols(self):
+        return [
+            'CRVAL1',
+            'CRVAL2',
+            'RA_REF',
+            'DEC_REF',
+            'GS_RA',
+            'GS_DEC',
+            'TARG_RA',
+            'TARG_DEC'
+        ]
+
+    def run_ingest(self, apriori=True, save_l1=True):
         self.ingest_data()
         if len(self.files) == 0:
             return
@@ -282,9 +299,7 @@ class JwstCalIngest:
             self.load_priors()
         self.scrub_exposures()
         self.extrapolate()
-        self.drop_unmatched()
-        self.convert_imagesize_units()
-        self.save_ingest_data()
+        self.save_ingest_data(save_l1=save_l1)
         self.save_training_sets()
 
     def ingest_data(self):
@@ -322,18 +337,38 @@ class JwstCalIngest:
         self.l3_dags.extend([l for l in l3_dags if l not in self.l3_dags])
         return df
 
+
+    def load_and_recast(self, dpath, idxcol=None):
+        if not os.path.exists(dpath):
+            self.log.warning(f"File does not exist at specified path: {dpath}")
+            return
+        idxcol = self.idxcol if idxcol is None else idxcol
+        df = pd.read_csv(dpath, index_col=idxcol)
+        return self.recast_dtypes(df)
+
+    def recast_dtypes(self, df):
+        """When loading a saved dataframe, some datatypes need to be recast appropriately
+        in order to be able to edit existing / insert new values."""
+        df['OBSERVTN'] = df['OBSERVTN'].apply(lambda x: self.validate_obs(x))
+        df['PROGRAM'] = df['PROGRAM'].apply(lambda x: '{:0>5}'.format(x))
+        for col in self.float_cols:
+            df[col] = df[col].apply(lambda x: self.convert_to_float(x))
+        df['year'] = df['year'].astype('int64')
+        df['date'] = pd.to_datetime(df['date'], yearfirst=True)
+        return df
+
     def load_priors(self, fname="ingest.csv"):
         ingest_file = os.path.join(self.outpath, fname)
         if not os.path.exists(ingest_file):
             self.log.debug("Prior data not found -- skipping.")
             return None
         self.log.info("Collecting prior data")
-        di = pd.read_csv(ingest_file, index_col=self.idxcol)
+        di = self.load_and_recast(ingest_file)
         try:
             self.df = pd.concat([self.df, di], axis=0)
             self.log.info(f"Prior data loaded successfully: {len(di)} exposures added.")
-            self.df['OBSERVTN'] = self.df['OBSERVTN'].apply(lambda x: self.validate_obs(x))
-            self.df['PROGRAM'] = self.df['PROGRAM'].apply(lambda x: '{:0>5}'.format(x))
+            # self.df['OBSERVTN'] = self.df['OBSERVTN'].apply(lambda x: self.validate_obs(x))
+            # self.df['PROGRAM'] = self.df['PROGRAM'].apply(lambda x: '{:0>5}'.format(x))
             self.update_dags()
             self.df.drop_duplicates(subset='dname', keep='first', inplace=True)
         except Exception as e:
@@ -354,22 +389,13 @@ class JwstCalIngest:
         self.drop_duplicates()
         self.df.set_index('dname', drop=False, inplace=True)
         self.df['pid'] = self.df['dname'].apply(lambda x: self.extract_pid(x))
-        self.df['OBSERVTN'] = self.df['OBSERVTN'].apply(lambda x: self.validate_obs(x))
-        self.df['PROGRAM'] = self.df['PROGRAM'].apply(lambda x: '{:0>5}'.format(x))
+        self.df = self.recast_dtypes(self.df)
+        # self.df['OBSERVTN'] = self.df['OBSERVTN'].apply(lambda x: self.validate_obs(x))
+        # self.df['PROGRAM'] = self.df['PROGRAM'].apply(lambda x: '{:0>5}'.format(x))
         params = list(map(lambda x: '-'.join([str(y) for y in x if y != "NONE"]),  self.df[self.param_cols].values))
         self.df['params'] = pd.DataFrame(params, index=self.df.index)
-        float_cols = [
-            'CRVAL1',
-            'CRVAL2',
-            'RA_REF',
-            'DEC_REF',
-            'GS_RA',
-            'GS_DEC',
-            'TARG_RA',
-            'TARG_DEC'
-        ]
-        for col in float_cols:
-            self.df[col] = self.df[col].apply(lambda x: self.convert_to_float(x))
+        # for col in self.float_cols:
+        #     self.df[col] = self.df[col].apply(lambda x: self.convert_to_float(x))
         self.drop_mosaics()
         self.df.drop('Dataset', axis=1, inplace=True)
 
@@ -459,11 +485,15 @@ class JwstCalIngest:
     def extrapolate(self):
         for exp_type in self.exp_types:
             self.match_product_groups(exp_type)
+        self.drop_extras("SPEC")
+        self.drop_unmatched()
+        self.convert_imagesize_units()
+        self.update_repro()
 
     def match_product_groups(self, exp_type):
+        self.exmatches[exp_type] = {}
         for k, v in self.scrb.expdata[exp_type].items():
             exposures = list(v.keys())
-            self.df.loc[self.df.dname.isin(exposures), 'pwild'] = k
             info = self.df.loc[exposures[0]]
             l3 = self.df.loc[
                 (
@@ -474,6 +504,7 @@ class JwstCalIngest:
             ]
             if len(l3) == 0:
                 self.log.debug(f"No matching products identified: {k}")
+                self.df.loc[self.df.dname.isin(exposures), 'expmode'] = exp_type
                 continue
             elif len(l3) > 1:
                 self.log.debug(f"Multiple products match: {k}")
@@ -486,6 +517,7 @@ class JwstCalIngest:
                         break
                     else:
                         continue
+                self.exmatches[exp_type][info['params']] = [p for p in pnames if p != pname]
                 imagesize = l3.loc[pname]['imagesize']
                 if not isinstance(imagesize, int):
                     imagesize = imagesize.max()
@@ -496,7 +528,16 @@ class JwstCalIngest:
             self.data[exp_type].loc[k, 'imagesize'] = imagesize
             self.df.loc[pname, 'pname'] = pname
             self.df.loc[self.df.dname.isin(exposures), 'pname'] = pname
-            self.df.loc[pname, 'pwild'] = k
+            self.df.loc[self.df.pname == pname, 'expmode'] = exp_type
+
+    def drop_extras(self, exp_type):
+        """Drop other L3 channel products for MIR_MRS (only 1 of 4 to be used in model training)"""
+        drops = []
+        for _, pnames in self.exmatches[exp_type].items():
+            if len(pnames) == 3:
+                drops.extend(pnames)
+        self.log.info(f"Dropping {len(drops)} extra products for {len(drops)/3} MIR_MRS matches")
+        self.df.drop(drops, axis=0, inplace=True)
 
     def drop_unmatched(self):
         for exp_type in list(self.data.keys()):
@@ -509,8 +550,17 @@ class JwstCalIngest:
                 self.data[exp_type].drop(self.rem[exp_type].index, axis=0, inplace=True)
             except KeyError:
                 continue
+        # *** TEMP *** #
+        if len(self.rem['TAC']) > 0:
+            for t in list(self.rem['TAC'].index):
+                n = len(self.scrb.expdata['TAC'][t])
+                self.rem['TAC'].loc[t, 'nexposur'] = n
+         # *** TEMP *** #
 
-    def convert_imagesize_units(self):
+    def convert_imagesize_units(self, data=None):
+        if data is not None:
+            data['imgsize_gb'] = data['imagesize'].apply(lambda x: x / 10**6)
+            return data
         for exp_type in self.exp_types:
             try:
                 if 'imagesize' in self.data[exp_type].columns:
@@ -518,7 +568,50 @@ class JwstCalIngest:
             except KeyError:
                 continue
 
- 
+    def update_repro(self):
+        l3 = self.df.loc[(self.df.pname.isna()) & (self.df.dag.isin(self.l3_dags))]
+        if len(l3) == 0:
+            self.log.debug("No repro candidates found - skipping.")
+            return
+        self.log.info(f"Identified {len(l3)} potential reprocessed products eligible for update")
+        dp = self.load_and_recast(f"{self.outpath}/training.csv")
+        if dp is None:
+            self.log.warning("Could not update repro data - file not found.")
+            return
+        updates = {}
+        pnames = list(l3.index)
+        for pname in pnames:
+            try:
+                expmode = dp.loc[pname]['expmode']
+                if expmode not in updates:
+                    updates[expmode] = [pname]
+                else:
+                    updates[expmode].append(pname)
+            except KeyError:
+                continue
+        for exp_type, pnames in updates.items():
+            repro = dict()
+            for pname in pnames:
+                repro[pname] = dict(
+                    imagesize=l3.loc[pname].imagesize,
+                    doy=l3.loc[pname].doy,
+                    date=l3.loc[pname].date,
+                    year=l3.loc[pname].year
+                )
+            data = pd.read_csv(self.trainpath.format(exp_type.lower()), index_col=self.idxcol)
+            for pname, revised in repro.items():
+                for k, v in revised.items():
+                    dp.loc[pname, k] = v
+                data.loc[data.pname == pname, 'imagesize'] = revised['imagesize']
+            data = self.convert_imagesize_units(data=data)
+            data[self.idxcol] = data.index
+            data.to_csv(self.trainpath.format(exp_type.lower()), index=False)
+            self.log.info(f"Updated {len(repro)} reprocessed {exp_type} products.")
+        dp[self.idxcol] = dp.index
+        dp.to_csv(f"{self.outpath}/training.csv", index=False)
+        self.df.drop(l3.index, axis=0, inplace=True)
+        self.log.info(f"Preprocessed file updated and L3 repro products removed from dataframe.")
+
     def save_training_sets(self):
         for exp_type in self.exp_types:
             if exp_type in self.data.keys() and len(self.data[exp_type]) > 0:
@@ -533,20 +626,27 @@ class JwstCalIngest:
                 self.rem[exp_type].to_csv(rpath, index=False)
                 self.log.info(f"Remaining {exp_type} data saved to: {rpath}")
 
-    def save_ingest_data(self):
+    def save_ingest_data(self, save_l1=True):
         self.df[self.idxcol] = self.df.index
         di = self.df.loc[self.df.pname.isna()].copy()
-        di.drop(['pwild', 'pname'], axis=1, inplace=True)
+        di.drop(['pname'], axis=1, inplace=True)
         ingest_file = f"{self.outpath}/ingest.csv"
         di.to_csv(ingest_file, index=False)
         self.log.info(f"Remaining Ingest data saved to: {ingest_file}")
 
         dp = self.df.drop(di.index, axis=0)
-        dp.drop('pwild', axis=1, inplace=True)
-        ppath = f"{self.outpath}/preprocessed.csv"
+        
+        if save_l1 is True:
+            l1 = dp.loc[dp.dag.isin(self.l1_dags)]
+            l1_path = f"{self.outpath}/level1.csv"
+            kwargs = dict(mode='a', index=False, header=False) if os.path.exists(l1_path) else dict(index=False)
+            l1.to_csv(l1_path, **kwargs)
+
+        dp = dp.loc[dp.dag.isin(self.l3_dags)]
+        ppath = f"{self.outpath}/training.csv"
         kwargs = dict(mode='a', index=False, header=False) if os.path.exists(ppath) else dict(index=False)
         dp.to_csv(ppath, **kwargs)
-        self.log.info(f"Preprocessed training data saved to: {ppath}")
+        self.log.info(f"{len(dp)} L3 products added to: {ppath}")
 
 
 if __name__ == "__main__":
