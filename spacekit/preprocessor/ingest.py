@@ -600,8 +600,11 @@ class JwstCalIngest:
         dp[self.idxcol] = dp.index
         dp.to_csv(f"{self.outpath}/training.csv", index=False)
         l3 = l3.loc[~l3.dname.isin(notrepro)]
-        self.df.drop(l3.index, axis=0, inplace=True)
-        self.log.info(f"Preprocessed file updated and {len(l3)} L3 repro products removed from dataframe.")
+        if len(l3) > 0:
+            self.df.drop(l3.index, axis=0, inplace=True)
+            self.log.info(f"Preprocessed file updated and {len(l3)} L3 repro products removed from dataframe.")
+        else:
+            self.log.info(f"0 repro candidates matched.")
 
     def save_training_sets(self):
         for exp_type in self.exp_types:
