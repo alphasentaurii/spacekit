@@ -249,10 +249,10 @@ class JwstCalIngest:
         outpath : str (path), optional
             directory path to save (and/or update) preprocessed files on local disk, by default None (current working directory)
         """
-        self.input_path = input_path.rstrip("/")
+        self.input_path = input_path.rstrip("/") if input_path is not None else os.getcwd()
         self.pfx = pfx
         self.outpath = input_path if outpath is None else outpath.rstrip("/")
-        self.exp_types = ["IMAGE", "SPEC", "TAC"]
+        self.exp_types = ["IMAGE", "SPEC", "TAC", "FGS"]
         self.files = []
         self.idxcol = "Dataset"
         self.dag = "DagNodeName"
@@ -291,6 +291,7 @@ class JwstCalIngest:
         if len(self.files) == 0:
             return
         self.initial_scrub()
+        self.drop_extra_miri_channels()
         if apriori is True:
             self.load_priors()
         self.scrub_exposures()
@@ -299,7 +300,8 @@ class JwstCalIngest:
         self.save_training_sets()
 
     def ingest_data(self):
-        self.read_files()
+        if len(self.files) == 0:
+            self.read_files()
         for f in self.files:
             df = pd.read_csv(f, index_col=self.idxcol)
             df = self.drop_level2(df)
@@ -311,10 +313,10 @@ class JwstCalIngest:
                 self.df = df
             else:
                 self.df = pd.concat([self.df, df], axis=0)
+        if self.df is not None:
+            self.log.info(f"{len(self.df)} datasets loaded from {len(self.files)} file(s)")
 
     def read_files(self):
-        if self.input_path is None:
-            self.input_path = os.getcwd()
         pattern = f"{self.input_path}/{self.pfx}*.csv"
         files = sorted(glob.glob(pattern))
         self.files = [f for f in files if f not in self.files]
@@ -332,7 +334,6 @@ class JwstCalIngest:
         self.l1_dags.extend([l for l in l1_dags if l not in self.l1_dags])
         self.l3_dags.extend([l for l in l3_dags if l not in self.l3_dags])
         return df
-
 
     def load_and_recast(self, dpath, idxcol=None):
         if not os.path.exists(dpath):
@@ -357,14 +358,20 @@ class JwstCalIngest:
         ingest_file = os.path.join(self.outpath, fname)
         if not os.path.exists(ingest_file):
             self.log.debug("Prior data not found -- skipping.")
-            return None
+            return
+        n1 = len(self.df)
         self.log.info("Collecting prior data")
         di = self.load_and_recast(ingest_file)
+        n2 = len(di)
         try:
             self.df = pd.concat([self.df, di], axis=0)
             self.log.info(f"Prior data loaded successfully: {len(di)} exposures added.")
             self.update_dags()
             self.df.drop_duplicates(subset='dname', keep='first', inplace=True)
+            n3 = len(self.df)
+            nd = n3 - n2 - n1
+            if nd > 0:
+                self.log.info(f"{nd} duplicates replaced by newer data")
         except Exception as e:
             self.log.error(str(e))
 
@@ -376,36 +383,56 @@ class JwstCalIngest:
     def initial_scrub(self):
         if self.df is None:
             return
-        self.log.info(f"{len(self.df)} datasets loaded from {len(self.files)} file(s)")
         self.df['dname'] = self.df.index
         self.df['dname'] = self.df['dname'].apply(lambda x: self.strip_file_suffix(x))
         self.df.rename({'ImageSize':'imagesize', self.dag: 'dag'}, axis=1, inplace=True)
         self.dag = 'dag'
-        self.drop_duplicates()
-        self.df.set_index('dname', drop=False, inplace=True)
         self.df['pid'] = self.df['dname'].apply(lambda x: self.extract_pid(x))
         self.df = self.recast_dtypes(self.df)
+        self.drop_dupes(priority1='date', priority2='imagesize', subset='dname')
+        self.df.set_index('dname', drop=False, inplace=True)
         params = list(map(lambda x: '-'.join([str(y) for y in x if y != "NONE"]),  self.df[self.param_cols].values))
         self.df['params'] = pd.DataFrame(params, index=self.df.index)
         self.drop_mosaics()
         self.df.drop('Dataset', axis=1, inplace=True)
 
-    def drop_duplicates(self, priority='imagesize'):
-        if priority is None:
-            self.df.drop_duplicates(subset='dname', inplace=True)
+    def drop_dupes(self, priority1='date', priority2='imagesize', subset='dname'):
+        if priority1 is None:
+            self.df.drop_duplicates(subset=subset, inplace=True)
             return
-        dupes = sorted(list(self.df.loc[self.df.duplicated(subset='dname')].index))
-        self.df.loc[dupes, 'dupe'] = True
+        dupes = sorted(list(self.df.loc[self.df.duplicated(subset=subset)].dname))
+        self.df.loc[self.df.dname.isin(dupes), 'dupe'] = True
         self.df.loc[self.df.dupe.isna(), 'dupe'] = False
+        # Initially all we're doing is marking datasets as duplicate, and unmarking those we wish to keep
+        # based on priority1 and priority2 (if specified). If duplicates match both priorities, we default
+        # to keeping only the last occurrence using pandas.drop_duplicates
         for d in dupes:
-            max_priority = self.df.loc[d][priority].max()
-            self.df.loc[(self.df.dname == d) & (self.df[priority] == max_priority), 'dupe'] = False
+            max_priority1 = self.df.loc[self.df.dname == d][priority1].max()
+            mp1 = list(self.df.loc[self.df.dname == d][priority1].unique())
+            if len(mp1) > 1:
+                self.df.loc[(self.df.dname == d) & (self.df[priority1] == max_priority1), 'dupe'] = False
+            elif priority2 is not None:
+                    max_priority2 = self.df.loc[self.df.dname ==d][priority2].max()
+                    mp2 = list(self.df.loc[self.df.dname == d][priority2].unique())
+                    if len(mp2) > 1:
+                        self.df.loc[(self.df.dname == d) & (self.df[priority2] == max_priority2), 'dupe'] = False
+                    else:
+                        self.log.warning(f"Duplicates match on {priority1} and {priority2} - keeping last only")
+                        self.df.loc[self.df.dname == d, 'dupe'] = False
+            else:
+                self.log.warning(f"Duplicates match on {priority1} and priority2 not specified - keeping last only")
+                self.df.loc[(self.df.dname == d) & (self.df[priority1] == max_priority1), 'dupe'] = False
+        # Use numeric index since duplicates have same dataset name 
         self.df.reset_index(inplace=True)
-        self.log.info(f"Dropping {len(dupes)} duplicates (priority={priority})")
-        self.df.drop(self.df.loc[self.df.dupe].index, axis=0, inplace=True)
+        redupe = self.df.loc[self.df.dupe].index
+        if len(redupe) > 0:
+            self.log.info(f"Dropping {len(redupe)} duplicates (p1={priority1}, p2={priority2})")
+            self.df.drop(redupe, axis=0, inplace=True)
         self.df.drop('dupe', axis=1, inplace=True)
-        if len(sorted(list(self.df.loc[self.df.duplicated(subset='dname')].index))) > 0:
-            self.df.drop_duplicates(subset='dname', inplace=True)
+        dupes2 = sorted(list(self.df.loc[self.df.duplicated(subset=subset)].index))
+        if len(dupes2) > 0:
+            self.log.info(f"Dropping {len(dupes2)} duplicates (subset={subset})")
+            self.df.drop_duplicates(subset=subset, keep='last', inplace=True)
 
     @staticmethod
     def strip_file_suffix(x):
@@ -458,7 +485,7 @@ class JwstCalIngest:
                 data=self.df.loc[self.df[self.dag].isin(self.l1_dags)],
                 encoding_pairs=KEYPAIR_DATA,
                 mode='df'
-            )
+        )
         nonsci = self.df.loc[~self.df['EXP_TYPE'].isin(self.scrb.level3_types)]
         self.df.drop(nonsci.index, axis=0, inplace=True)
         self.log.info(f"Dropped {len(nonsci)} non-L3 exposure types")
@@ -474,21 +501,39 @@ class JwstCalIngest:
         return map(lambda x: pd.DataFrame.from_dict(x, orient='index'), data)
 
     def extrapolate(self):
-        for exp_type in self.exp_types:
+        for exp_type in self.data.keys():
             self.match_product_groups(exp_type)
-        self.drop_extras("SPEC")
+            if len(self.exmatches[exp_type]) > 0:
+                self.log.warning(f"Multiple matches in {exp_type}: {len(self.exmatches[exp_type])}")
         self.drop_unmatched()
         self.convert_imagesize_units()
         if 'pname' not in self.df.columns:
             self.log.debug("No L3 candidates to match")
             return
-        self.update_repro()
+        # TEMP
+        self.l3 = self.df.loc[(self.df.pname.isna()) & (self.df.dag.isin(self.l3_dags))]
+        if len(self.l3) > 0:
+            self.log.warning(f"Unmatched L3 products: {len(self.L3)} - run update_repro")
+        #self.update_repro()
 
     def match_product_groups(self, exp_type):
+        """Matching L3 product with its associated L1 input exposures.
+
+        1. If TARGNAME: match using params (PID-OBS-OPTELEM-SUBARRAY-EXP_TYPE) + TARGNAME
+        2. Else: match using params
+        3. If results > 1: + gs_mag
+
+        Parameters
+        ----------
+        exp_type : str
+            model-based 'exp_type' grouping: IMAGE, SPEC, TAC, or FGS
+        """
+        self.log.info(f"Matching {exp_type} L1 exposures --> L3 products")
         self.exmatches[exp_type] = {}
         for k, v in self.scrb.expdata[exp_type].items():
             exposures = list(v.keys())
             info = self.df.loc[exposures[0]]
+            
             l3 = self.df.loc[
                 (
                     self.df['params'] == info['params']
@@ -501,20 +546,36 @@ class JwstCalIngest:
                 self.df.loc[self.df.dname.isin(exposures), 'expmode'] = exp_type
                 continue
             elif len(l3) > 1:
-                self.log.debug(f"Multiple products match: {k}")
-                pnames = sorted(list(l3.index), reverse=True)
-                pname = pnames[0] # default if better match not found
-                prefix = k.split('_')[0]
-                for p in pnames:
-                    if p.split('_')[0] == prefix:
-                        pname = p
-                        break
-                    else:
-                        continue
-                self.exmatches[exp_type][info['params']] = [p for p in pnames if p != pname]
-                imagesize = l3.loc[pname]['imagesize']
-                if not isinstance(imagesize, int):
-                    imagesize = imagesize.max()
+                # TEMP
+                self.log.debug(f"MULTI MATCH ELIMINATION: {k}")
+                col = 'TARGNAME' if isinstance(info['TARGNAME'], str) else 'GS_MAG'
+                l3 = self.df.loc[
+                    (
+                        self.df['params'] == info['params']
+                    ) & (
+                        self.df[self.dag].isin(self.l3_dags)
+                    ) & (
+                        self.df[col] == info[col]
+                    )
+                ]
+                if len(l3) == 1:
+                    pname = l3.iloc[0]['dname']
+                    imagesize = l3.iloc[0]['imagesize']
+                elif len(l3) > 1:
+                    self.log.debug(f"Multiple products match: {k}")
+                    pnames = sorted(list(l3.index), reverse=True)
+                    pname = pnames[0] # default if better match not found
+                    prefix = k.split('_')[0]
+                    for p in pnames:
+                        if p.split('_')[0] == prefix:
+                            pname = p
+                            break
+                        else:
+                            continue
+                    self.exmatches[exp_type][info['params']] = [p for p in pnames if p != pname]
+                    imagesize = l3.loc[pname]['imagesize']
+                    if not isinstance(imagesize, int):
+                        imagesize = imagesize.max()
             else:
                 pname = l3.iloc[0]['dname']
                 imagesize = l3.iloc[0]['imagesize']
@@ -524,14 +585,21 @@ class JwstCalIngest:
             self.df.loc[self.df.dname.isin(exposures), 'pname'] = pname
             self.df.loc[self.df.pname == pname, 'expmode'] = exp_type
 
-    def drop_extras(self, exp_type):
-        """Drop other L3 channel products for MIR_MRS (only 1 of 4 to be used in model training)"""
-        drops = []
-        for _, pnames in self.exmatches[exp_type].items():
-            if len(pnames) == 3:
-                drops.extend(pnames)
-        self.log.info(f"Dropping {len(drops)} extra products for {len(drops)/3} MIR_MRS matches")
-        self.df.drop(drops, axis=0, inplace=True)
+    def drop_extra_miri_channels(self):
+        """Keep only channel 1 of MIR_MRS L3 products, drop channels 2-4"""
+        ch234 = self.df.loc[
+            (
+                self.df['EXP_TYPE'] == "MIR_MRS"
+            ) & (
+                self.df[self.dag].isin(self.l3_dags)
+            ) & (
+                self.df['CHANNEL'] != '1'
+            )
+        ]
+        if len(ch234) > 0:
+            drops = ch234.index
+            self.log.info(f"Dropping channels 2-4 for {len(drops)/3} MIR_MRS L3 products")
+            self.df.drop(drops, axis=0, inplace=True)
 
     def drop_unmatched(self):
         for exp_type in list(self.data.keys()):
@@ -540,8 +608,8 @@ class JwstCalIngest:
                     self.rem[exp_type] = self.data[exp_type].loc[self.data[exp_type]['imagesize'].isna()].copy()
                 else:
                     self.rem[exp_type] = self.data[exp_type].copy()
-                self.log.info(f"Dropping {len(self.rem[exp_type].index)} of {len(self.data[exp_type].index)} unmatched inputs for {exp_type}")
                 self.data[exp_type].drop(self.rem[exp_type].index, axis=0, inplace=True)
+                self.log.info(f"[{exp_type}] L3 matched: {len(self.data[exp_type])} | remaining: {len(self.rem[exp_type])}")
             except KeyError:
                 continue
 
@@ -573,36 +641,32 @@ class JwstCalIngest:
             try:
                 expmode = dp.loc[pname]['expmode']
                 if expmode not in updates:
-                    updates[expmode] = [pname]
-                else:
-                    updates[expmode].append(pname)
-            except KeyError:
-                notrepro.append(pname)
-                continue
-        for exp_type, pnames in updates.items():
-            repro = dict()
-            for pname in pnames:
-                repro[pname] = dict(
+                    updates[expmode] = dict()
+                updates[expmode][pname] = dict(
                     imagesize=l3.loc[pname].imagesize,
                     doy=l3.loc[pname].doy,
                     date=l3.loc[pname].date,
                     year=l3.loc[pname].year
                 )
+            except KeyError:
+                notrepro.append(pname)
+                continue
+        for exp_type, repro_data in updates.items():
             data = pd.read_csv(self.trainpath.format(exp_type.lower()), index_col=self.idxcol)
-            for pname, revised in repro.items():
+            for name, revised in repro_data.items():
                 for k, v in revised.items():
-                    dp.loc[pname, k] = v
-                data.loc[data.pname == pname, 'imagesize'] = revised['imagesize']
+                    dp.loc[name, k] = v
+                data.loc[data.pname == name, 'imagesize'] = revised['imagesize']
             data = self.convert_imagesize_units(data=data)
             data[self.idxcol] = data.index
             data.to_csv(self.trainpath.format(exp_type.lower()), index=False)
-            self.log.info(f"Updated {len(repro)} reprocessed {exp_type} products.")
+            self.log.info(f"Updated {len(repro_data)} reprocessed {exp_type} products.")
         dp[self.idxcol] = dp.index
         dp.to_csv(f"{self.outpath}/training.csv", index=False)
         l3 = l3.loc[~l3.dname.isin(notrepro)]
         if len(l3) > 0:
             self.df.drop(l3.index, axis=0, inplace=True)
-            self.log.info(f"Preprocessed file updated and {len(l3)} L3 repro products removed from dataframe.")
+            self.log.info(f"Training file updated and {len(l3)} L3 repro products removed from dataframe.")
         else:
             self.log.info(f"0 repro candidates matched.")
 
@@ -639,6 +703,7 @@ class JwstCalIngest:
                 l1_path = f"{self.outpath}/level1.csv"
                 kwargs = dict(mode='a', index=False, header=False) if os.path.exists(l1_path) else dict(index=False)
                 l1.to_csv(l1_path, **kwargs)
+                self.log.info(f"{len(l1)} L1 products added to: {l1_path}")
 
             dp = dp.loc[dp.dag.isin(self.l3_dags)]
             ppath = f"{self.outpath}/training.csv"

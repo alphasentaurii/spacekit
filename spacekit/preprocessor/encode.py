@@ -108,15 +108,16 @@ class PairEncoder:
         return self.invpairs
 
     def handle_unknowns(self, unknowns):
-        self.log.warning(f"Found unknown values:\n {self.arr[unknowns]}")
-        for u in unknowns:
-            add_encoding = max(list(self.keypairs.values())) + 1
-            try:
-                self.keypairs[self.arr[u]] = add_encoding
+        uvals = np.unique(self.arr[unknowns])
+        self.log.warning(f"Found unknown values:\n {uvals}")
+        try:
+            for u in uvals:
+                add_encoding = max(list(self.keypairs.values())) + 1
+                self.keypairs[u] = add_encoding
                 self.classes_ = list(self.keypairs.keys())
-                self.log.info("Successfully added encoding for unknown values.")
-            except Exception as e:
-                self.log.error("Unable to add encoding for unknown value(s)", e)
+            self.log.info("Successfully added encoding for unknown values.")
+        except Exception as e:
+            self.log.error("Unable to add encoding for unknown value(s)", e)
 
     def fit(self, data, keypairs, axiscol=None, handle_unknowns=True):
         if isinstance(data, pd.DataFrame):
@@ -237,7 +238,7 @@ class CategoricalEncoder:
                 "encoding_pairs attr must be instantiated with key-value pairs"
             )
             return
-        self.log.info("Encoding categorical features...")
+        self.log.debug("Encoding categorical features...")
         for col, name in self.encodings.items():
             keypairs = self.encoding_pairs[col]
             enc = PairEncoder()

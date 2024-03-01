@@ -13,6 +13,10 @@ from spacekit.extractor.radio import HstSvmRadio
 from spacekit.preprocessor.encode import HstSvmEncoder, JwstEncoder, encode_booleans
 from spacekit.logger.log import Logger
 
+TRUEVALS = [True, "t", "T", "True", "true", "TRUE"]
+FALSEVALS = [False, 'f', 'F', 'False', 'false', 'FALSE', 'NONE', 'None', 'none', 'nan', 'NaN', None]
+NANVALS = ["NaN", "N/A", "NONE"]
+SUBNAN = NANVALS + ["FULL"]
 
 class Scrubber:
     """Base parent class for preprocessing data. Includes some basic column scrubbing methods for pandas dataframes. The heavy
@@ -654,6 +658,13 @@ class JwstCalScrubber(Scrubber):
         ]
 
     @property
+    def source_based(self):
+        return self._source_based()
+
+    def _source_based(self):
+        return ["NRC_WFSS", "NIS_WFSS", "NRS_MSASPEC", "NRS_FIXEDSLIT"]
+
+    @property
     def expdata(self):
         return self._expdata()
 
@@ -702,11 +713,11 @@ class JwstCalScrubber(Scrubber):
         v : dict
             exposure header data
         tnum : str
-            number assigned to each unique target name within a program
+            number assigned to each unique target (targ_ra) within a program
         """
-        pupil = f"{v['PUPIL']}" if v["PUPIL"] not in ["NaN", "N/A", "NONE"] else ""
-        fltr = f"{v['FILTER']}" if v["FILTER"] not in ["NaN", "N/A", "NONE"] else ""
-        subarray = f"-{v['SUBARRAY']}" if v["SUBARRAY"] not in ["NaN", "N/A", "NONE", "FULL"] else ""
+        pupil = f"{v['PUPIL']}" if v["PUPIL"] not in NANVALS else ""
+        fltr = f"{v['FILTER']}" if v["FILTER"] not in NANVALS else ""
+        subarray = f"-{v['SUBARRAY']}" if v["SUBARRAY"] not in SUBNAN else ""
         if not pupil:
             optelem = fltr
         elif pupil in ["CLEAR", "CLEARP", "F405N"]:
@@ -716,7 +727,7 @@ class JwstCalScrubber(Scrubber):
 
         p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{subarray}".lower()
 
-        if v['EXP_TYPE'] in self.coron_ami or v["TSOVISIT"] in [True, "t", "T", "True"]:
+        if v['EXP_TYPE'] in self.coron_ami or v["TSOVISIT"] in TRUEVALS:
             self.make_tac_product_name(k, v, p)
             return
         elif v["INSTRUME"] == "FGS":
@@ -734,7 +745,7 @@ class JwstCalScrubber(Scrubber):
         NOTE: Although the pipeline would create multiple products for either source-based exposures
         or (channel-based) MIRI MRS exposures, only one product name will be created since the model is
         concerned with RAM, i.e. how large the memory footprint is to calibrate a set of input exposures.
-        Source-based products use "s00001" for the source; MIR_MRS exposures default to "ch1" for channel.
+        Source-based products use "s00001" for the source; MIR_MRS exposures default to "ch4" for channel.
 
         Parameters
         ----------
@@ -743,49 +754,44 @@ class JwstCalScrubber(Scrubber):
         v : dict
             exposure header data
         tnum : str
-            number assigned to each unique target name within a program
+            number assigned to each unique target (targ_ra) within a program
         """
         exptype = v["EXP_TYPE"]
-        if exptype == "MIR_LRS-SLITLESS" and v["TSOVISIT"] in [False, 'False', 'f', 'F']:
-            # L3 product for this exp_type only if TSO
+        if exptype == "MIR_LRS-SLITLESS" and v["TSOVISIT"] in FALSEVALS:
+            # L3 product only if TSO
             return
-        if exptype in ["NRC_WFSS", "NIS_WFSS", "NRS_MSASPEC", "NRS_FIXEDSLIT"]:
+        if exptype in self.source_based:
             tnum = "s00001" # source-based exposure naming convention
-        pupil = f"{v['PUPIL']}" if v["PUPIL"] not in ["NaN", "N/A", "NONE"] else ""
-        fltr = f"{v['FILTER']}" if v["FILTER"] not in ["NaN", "N/A", "NONE"] else ""
+        pupil = f"{v['PUPIL']}" if v["PUPIL"] not in NANVALS else ""
+        fltr = f"{v['FILTER']}" if v["FILTER"] not in NANVALS else ""
         grating = (
-            f"{v['GRATING']}" if v["GRATING"] not in ["NaN", "N/A", "NONE"] else ""
+            f"{v['GRATING']}" if v["GRATING"] not in NANVALS else ""
         )
         if fltr or grating:
             if not grating:
                 if pupil:
                     if exptype in ["NRC_WFSS", "NIS_SOSS", "NRC_TSGRISM"]:
-                        # jw02078-o111_s00955_nircam_f356w-grismr
-                        # jw06543-o001_t1_niriss_clear-gr700xd-substrip256
                         optelem = f"{fltr}-{pupil}"
                     else:
-                        # NIRISS: jw01089-o001_{source_id}_niriss_f140m-gr150r
                         optelem = f"{pupil}-{fltr}"
                 else:
                     optelem = fltr # miri, niriss
             elif not fltr:
                 optelem = grating
             elif exptype == "NRS_IFU":
-                # jw01022-o016_t001_nirspec_g140h-f100lp
                 optelem = f"{grating}-{fltr}"
             else:
-                optelem = f"{fltr}-{grating}" # 'jw01117-o021_{source_id}_nirspec_clear-prism'
+                optelem = f"{fltr}-{grating}"
         else:
             optelem = "" # miri mrs
-        slit = f"-{v['FXD_SLIT']}" if v["FXD_SLIT"] not in ["NaN", "N/A", "NONE"] else ""
-        subarray = f"-{v['SUBARRAY']}" if v["SUBARRAY"] not in ["NaN", "N/A", "NONE", "FULL"] else ""
+        slit = f"-{v['FXD_SLIT']}" if v["FXD_SLIT"] not in NANVALS else ""
+        subarray = f"-{v['SUBARRAY']}" if v["SUBARRAY"] not in SUBNAN else ""
         
         p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{slit}{subarray}".lower()
         
-        if exptype in self.coron_ami or v["TSOVISIT"] in [True, "t", "T", "True"]:
+        if exptype in self.coron_ami or v["TSOVISIT"] in TRUEVALS:
             if fltr == 'CLEAR' and grating == 'PRISM':
-                # These appear to drop fxd slit in product name
-                # jw01981-o051_t005_nirspec_clear-prism-sub512
+                # drop fxd slit from product name
                 p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{subarray}".lower()
             self.make_tac_product_name(k, v, p)
             return
@@ -809,37 +815,62 @@ class JwstCalScrubber(Scrubber):
         p : str
             product name
         """
+        if self.mode != 'fits':
+            del v["NEXPOSUR"]
         if p in self.tac_products:
             self.tac_products[p][k] = v
         else:
             self.tac_products[p] = {k: v}
 
     def make_fgs_product_name(self, k, v, p):
-        # p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_clear"
-        # p = p.lower()
         if p in self.fgs_products:
             self.fgs_products[p][k] = v
         else:
             self.fgs_products[p] = {k: v}
 
-    def get_level3_products(self):
-        """Determines potential L3 products based on obs, filters, detectors, etc
-        Then groups input exposures by target+obs num+optelem(+fxd_slit,+subarray).
-        Target names with no value ("NaN" or "NONE") are still assigned a target or
-        source number for the purpose of grouping exposures together. 
-        """
-        
-        targetnames = list(set([v["TARGNAME"] for v in self.exp_headers.values()]))
+    def fake_target_numbers(self):
+        targ_exptypes = [t for t in self.level3_types if t not in self.source_based]
+        targetnames = list(set(
+            [
+                v['TARGNAME'] for v in self.exp_headers.values() \
+                    if v['EXP_TYPE'] in targ_exptypes and \
+                        isinstance(v['TARGNAME'], str)
+            ]
+        ))
         tnums = [f"t{i+1}" for i, _ in enumerate(targetnames)]
-        targs = dict(zip(targetnames, tnums))
+        tnames = dict(zip(targetnames, tnums))
+
+        gstargs = list(set(
+            [
+                v['GS_MAG'] for v in self.exp_headers.values() \
+                    if v['EXP_TYPE'] in targ_exptypes and \
+                        isinstance(v['TARGNAME'], float)
+            ]
+        ))
+        gnums = [f"t{i+1}" for i, _ in enumerate(gstargs)]
+        gnames = dict(zip(gstargs, gnums))
+
+        return tnames, gnames
+
+    def get_level3_products(self):
+        """Determines potential L3 products based on groups of input exposures 
+        with matching Fits keywords prog+obs+optelem+fxd_slit+subarray.
+        The L3 products are assigned a fake "target number" using a count of unique 
+        GS_MAG values.
+        """
+        # targetnames = list(set([v["GS_MAG"] for v in self.exp_headers.values()]))
+        # tnums = [f"t{i+1}" for i, _ in enumerate(targetnames)]
+        # targs = dict(zip(targetnames, tnums))
+        tnames, gnames = self.fake_target_numbers()
 
         for k, v in self.exp_headers.items():
             exp_type = v["EXP_TYPE"]
             if exp_type in self.level3_types:
-                tnum = targs.get(v["TARGNAME"]) 
-                # if v["INSTRUME"] == "FGS":
-                #     if exp_type == "FGS_IMAGE":
-                #         self.make_fgs_product_name(k, v, tnum)
+                if exp_type in self.source_based:
+                    tnum = 's00001'
+                else:
+                    tnum = tnames.get(v['TARGNAME'], gnames.get(v['GS_MAG'], 't0'))
+                # tnum = targs.get(v["GS_MAG"], 't0')
                 if "IMAGE" in exp_type.split("_")[-1]:
                     self.make_image_product_name(k, v, tnum)
                 else:
@@ -897,6 +928,7 @@ class JwstCalScrubber(Scrubber):
         dtype_keys = self.get_dtype_keys()
         nandler = NaNdler(self.df, dtype_keys, allow_neg=False, verbose=False)
         self.df = nandler.apply_nandlers()
+        self.log.info(f"Encoding categorical features [{exp_type}]")
         encoder = JwstEncoder(
             self.df, fkeys=dtype_keys["categorical"], encoding_pairs=self.encoding_pairs
         )
