@@ -3,6 +3,7 @@ import sys
 import glob
 import shutil
 import pandas as pd
+import numpy as np
 from argparse import ArgumentParser
 from spacekit.logger.log import Logger
 from spacekit.extractor.scrape import JsonScraper
@@ -265,6 +266,7 @@ class JwstCalIngest:
         self.rem = {}
         self.param_cols = ['pid', 'OBSERVTN', 'FILTER', 'GRATING', 'PUPIL', 'SUBARRAY', 'EXP_TYPE']
         self.scrb = None
+        self.ingest_file = os.path.join(self.outpath, "ingest.csv")
         self.trainpath = self.outpath + "/train-{}.csv"
         self.rempath =  self.outpath + "/rem-{}.csv"
         self.__name__ = "JwstCalIngest"
@@ -282,22 +284,23 @@ class JwstCalIngest:
             'DEC_REF',
             'GS_RA',
             'GS_DEC',
+            'GS_MAG',
             'TARG_RA',
             'TARG_DEC'
         ]
 
-    def run_ingest(self, apriori=True, save_l1=True):
+    def run_ingest(self, save_l1=True):
         self.ingest_data()
         if len(self.files) == 0:
             return
         self.initial_scrub()
         self.drop_extra_miri_channels()
-        if apriori is True:
-            self.load_priors()
+        self.load_priors()
         self.scrub_exposures()
         self.extrapolate()
-        self.save_ingest_data(save_l1=save_l1)
-        self.save_training_sets()
+        if self.l3 is None:
+            self.save_ingest_data(save_l1=save_l1)
+            self.save_training_sets()
 
     def ingest_data(self):
         if len(self.files) == 0:
@@ -352,28 +355,38 @@ class JwstCalIngest:
             df[col] = df[col].apply(lambda x: self.convert_to_float(x))
         df['year'] = df['year'].astype('int64')
         df['date'] = pd.to_datetime(df['date'], yearfirst=True)
+        df['TARG_RA'] = df['TARG_RA'].apply(lambda x: np.round(x, 8))
+        # fine-grained matching param without affecting original values
+        df['targra'] = df['TARG_RA'].apply(lambda x: np.round(x, 6))
         return df
 
-    def load_priors(self, fname="ingest.csv"):
-        ingest_file = os.path.join(self.outpath, fname)
-        if not os.path.exists(ingest_file):
+    def load_priors(self):
+        if not os.path.exists(self.ingest_file):
             self.log.debug("Prior data not found -- skipping.")
             return
-        n1 = len(self.df)
-        self.log.info("Collecting prior data")
-        di = self.load_and_recast(ingest_file)
-        n2 = len(di)
-        try:
-            self.df = pd.concat([self.df, di], axis=0)
-            self.log.info(f"Prior data loaded successfully: {len(di)} exposures added.")
-            self.update_dags()
-            self.df.drop_duplicates(subset='dname', keep='first', inplace=True)
-            n3 = len(self.df)
-            nd = n3 - n2 - n1
-            if nd > 0:
-                self.log.info(f"{nd} duplicates replaced by newer data")
-        except Exception as e:
-            self.log.error(str(e))
+        l3params = self.df.loc[self.df.dag.isin(self.l3_dags)].params.unique()
+        subcheck = []
+        for param in l3params:
+            cnt = self.df.loc[(self.df.params == param) & (self.df.dag.isin(self.l1_dags))].dname.count()
+            if cnt == 0:
+                subcheck.append(param)
+        if not subcheck:
+            return
+        self.log.info("Checking prior data")
+        di = self.load_and_recast(self.ingest_file)
+        di = di.sort_values(by='date', ascending=False).drop_duplicates(subset='dname', keep='first')
+        ds = di.loc[di.params.isin(subcheck)].copy()
+        if len(ds) > 0:
+            try:
+                self.df = pd.concat([self.df, ds], axis=0)
+                self.log.info(f"Prior data loaded successfully: {len(ds)} exposures added.")
+                self.update_dags()
+                self.df.drop_duplicates(subset='dname', keep='first', inplace=True)
+                di.drop(ds.index, axis=0, inplace=True)
+                di[self.idxcol] = di.index
+                di.to_csv(self.ingest_file, index=False)
+            except Exception as e:
+                self.log.error(str(e))
 
     def update_dags(self):
         alldags = sorted(list(self.df[self.dag].value_counts().index))
@@ -435,6 +448,12 @@ class JwstCalIngest:
             self.df.drop_duplicates(subset=subset, keep='last', inplace=True)
 
     @staticmethod
+    def save_kwargs(path):
+        if not os.path.exists(path):
+            return dict(index=False)
+        return dict(mode='a', index=False, header=False)
+
+    @staticmethod
     def strip_file_suffix(x):
         if x.endswith("fits"):
             x = '_'.join(x.split('_')[:-1])
@@ -457,6 +476,8 @@ class JwstCalIngest:
     def convert_to_float(x):
         if x != "NONE":
             return float(x)
+        else:
+            return np.nan
 
     @staticmethod
     def mark_mosaics(x):
@@ -471,7 +492,7 @@ class JwstCalIngest:
         mosaics = self.df.loc[self.df['mosaic']].copy()
         if len(mosaics) > 0:
             mpath = f"{self.outpath}/mosaics.csv"
-            kwargs = dict(mode='a', index=False, header=False) if os.path.exists(mpath) else dict(index=False)
+            kwargs = self.save_kwargs(mpath)
             mosaics[self.idxcol] = mosaics.index
             mosaics.to_csv(mpath, **kwargs)
             self.log.info(f"Mosaic data saved to: {mpath}")
@@ -509,19 +530,44 @@ class JwstCalIngest:
         self.convert_imagesize_units()
         if 'pname' not in self.df.columns:
             self.log.debug("No L3 candidates to match")
+            self.l3 = None
             return
-        # TEMP
+        self.update_repro()
         self.l3 = self.df.loc[(self.df.pname.isna()) & (self.df.dag.isin(self.l3_dags))]
         if len(self.l3) > 0:
-            self.log.warning(f"Unmatched L3 products: {len(self.L3)} - run update_repro")
-        #self.update_repro()
+            self.log.warning(f"Unmatched L3 products: {len(self.l3)}")
+        else:
+            self.l3 = None
+
+    def match_query(self, info, extra_param=None):
+        if extra_param:
+            l3 = self.df.loc[
+                (
+                    self.df['params'] == info['params']
+                ) & (
+                    self.df[self.dag].isin(self.l3_dags)
+                ) & (
+                    self.df[extra_param]== info[extra_param]
+                )
+            ]
+            if len(l3) == 0: # drop extra search param
+                l3 = self.match_query(info)
+        else:
+            l3 = self.df.loc[
+                (
+                    self.df['params'] == info['params']
+                ) & (
+                    self.df[self.dag].isin(self.l3_dags)
+                )
+            ]
+        return l3
 
     def match_product_groups(self, exp_type):
         """Matching L3 product with its associated L1 input exposures.
 
         1. If TARGNAME: match using params (PID-OBS-OPTELEM-SUBARRAY-EXP_TYPE) + TARGNAME
-        2. Else: match using params
-        3. If results > 1: + gs_mag
+        2. Elif fixed target: match using params + targra (TARG_RA rounded) 
+        3. Else: match params + gs_mag
 
         Parameters
         ----------
@@ -532,58 +578,35 @@ class JwstCalIngest:
         self.exmatches[exp_type] = {}
         for k, v in self.scrb.expdata[exp_type].items():
             exposures = list(v.keys())
+            self.df.loc[self.df.dname.isin(exposures), 'expmode'] = exp_type
             info = self.df.loc[exposures[0]]
-            
-            l3 = self.df.loc[
-                (
-                    self.df['params'] == info['params']
-                ) & (
-                    self.df[self.dag].isin(self.l3_dags)
-                )
-            ]
+            qp = 'TARGNAME'
+            if info[qp] == "NONE" or isinstance(info[qp], float):
+                if info['VISITYPE'] == "PRIME_TARGETED_FIXED":
+                    qp = 'targra' # TARG_RA rounded to 6 decimals
+                else:
+                    qp = 'GS_MAG'
+            l3 = self.match_query(info, extra_param=qp)
             if len(l3) == 0:
                 self.log.debug(f"No matching products identified: {k}")
-                self.df.loc[self.df.dname.isin(exposures), 'expmode'] = exp_type
                 continue
-            elif len(l3) > 1:
-                # TEMP
-                self.log.debug(f"MULTI MATCH ELIMINATION: {k}")
-                col = 'TARGNAME' if isinstance(info['TARGNAME'], str) else 'GS_MAG'
-                l3 = self.df.loc[
-                    (
-                        self.df['params'] == info['params']
-                    ) & (
-                        self.df[self.dag].isin(self.l3_dags)
-                    ) & (
-                        self.df[col] == info[col]
-                    )
-                ]
-                if len(l3) == 1:
-                    pname = l3.iloc[0]['dname']
-                    imagesize = l3.iloc[0]['imagesize']
-                elif len(l3) > 1:
-                    self.log.debug(f"Multiple products match: {k}")
-                    pnames = sorted(list(l3.index), reverse=True)
-                    pname = pnames[0] # default if better match not found
-                    prefix = k.split('_')[0]
-                    for p in pnames:
-                        if p.split('_')[0] == prefix:
-                            pname = p
-                            break
-                        else:
-                            continue
-                    self.exmatches[exp_type][info['params']] = [p for p in pnames if p != pname]
-                    imagesize = l3.loc[pname]['imagesize']
-                    if not isinstance(imagesize, int):
-                        imagesize = imagesize.max()
-            else:
+            else: 
+                if len(l3) > 1:
+                    if qp == 'TARGNAME' and info['VISITYPE'] == 'PRIME_TARGETED_FIXED':
+                        l3 = self.match_query(info, extra_param='targra')
+                    if len(l3) > 1: # FALLBACK
+                        self.log.warning(f"MULTI MATCH ELIMINATION: {k}")
+                        pnames = sorted(list(l3.index))
+                        self.exmatches[exp_type][info['params']] = pnames
+                        self.df.loc[self.df.dname.isin(pnames), 'expmode'] = exp_type
+                        l3 = l3.loc[l3['dname'] == pnames[0]]
                 pname = l3.iloc[0]['dname']
                 imagesize = l3.iloc[0]['imagesize']
-            self.data[exp_type].loc[k, 'pname'] = pname
-            self.data[exp_type].loc[k, 'imagesize'] = imagesize
-            self.df.loc[pname, 'pname'] = pname
-            self.df.loc[self.df.dname.isin(exposures), 'pname'] = pname
-            self.df.loc[self.df.pname == pname, 'expmode'] = exp_type
+                self.data[exp_type].loc[k, 'pname'] = pname
+                self.data[exp_type].loc[k, 'imagesize'] = imagesize
+                self.df.loc[pname, 'pname'] = pname
+                self.df.loc[self.df.dname.isin(exposures), 'pname'] = pname
+                self.df.loc[self.df.pname == pname, 'expmode'] = exp_type
 
     def drop_extra_miri_channels(self):
         """Keep only channel 1 of MIR_MRS L3 products, drop channels 2-4"""
@@ -627,13 +650,13 @@ class JwstCalIngest:
     def update_repro(self):
         l3 = self.df.loc[(self.df.pname.isna()) & (self.df.dag.isin(self.l3_dags))]
         if len(l3) == 0:
-            self.log.debug("No repro candidates found - skipping.")
             return
         self.log.info(f"Identified {len(l3)} potential reprocessed products eligible for update")
         dp = self.load_and_recast(f"{self.outpath}/training.csv")
         if dp is None:
             self.log.warning("Could not update repro data - file not found.")
             return
+        dp = dp.sort_values(by='date').drop_duplicates(subset='pname', keep='last')
         updates = {}
         notrepro = []
         pnames = list(l3.index)
@@ -668,14 +691,14 @@ class JwstCalIngest:
             self.df.drop(l3.index, axis=0, inplace=True)
             self.log.info(f"Training file updated and {len(l3)} L3 repro products removed from dataframe.")
         else:
-            self.log.info(f"0 repro candidates matched.")
+            self.log.warning(f"0 repro candidates matched.")
 
     def save_training_sets(self):
         for exp_type in self.exp_types:
             if exp_type in self.data.keys() and len(self.data[exp_type]) > 0:
                 fpath = self.trainpath.format(exp_type.lower())
                 self.data[exp_type][self.idxcol] = self.data[exp_type].index
-                kwargs = dict(mode='a', index=False, header=False) if os.path.exists(fpath) else dict(index=False)
+                kwargs = self.save_kwargs(fpath)
                 self.data[exp_type].to_csv(fpath, **kwargs)
                 self.log.info(f"{exp_type} training data saved to: {fpath}")
             if exp_type in self.rem.keys() and len(self.rem[exp_type]) > 0:
@@ -686,28 +709,28 @@ class JwstCalIngest:
 
     def save_ingest_data(self, save_l1=True):
         self.df[self.idxcol] = self.df.index
-        ingest_file = f"{self.outpath}/ingest.csv"
+        
         if 'pname' not in self.df.columns:
             di = self.df.loc[self.df.dag.isin(self.l1_dags)]
         else:
             di = self.df.loc[self.df.pname.isna()].copy()
             di.drop(['pname'], axis=1, inplace=True)
-        
-        di.to_csv(ingest_file, index=False)
-        self.log.info(f"Remaining Ingest data saved to: {ingest_file}")
+        kwargs = self.save_kwargs(self.ingest_file)
+        di.to_csv(self.ingest_file, **kwargs)
+        self.log.info(f"Remaining Ingest data saved to: {self.ingest_file}")
 
         dp = self.df.drop(di.index, axis=0)
         if len(dp) > 0:
             if save_l1 is True:
                 l1 = dp.loc[dp.dag.isin(self.l1_dags)]
                 l1_path = f"{self.outpath}/level1.csv"
-                kwargs = dict(mode='a', index=False, header=False) if os.path.exists(l1_path) else dict(index=False)
+                kwargs = self.save_kwargs(l1_path)
                 l1.to_csv(l1_path, **kwargs)
                 self.log.info(f"{len(l1)} L1 products added to: {l1_path}")
 
             dp = dp.loc[dp.dag.isin(self.l3_dags)]
             ppath = f"{self.outpath}/training.csv"
-            kwargs = dict(mode='a', index=False, header=False) if os.path.exists(ppath) else dict(index=False)
+            kwargs = self.save_kwargs(ppath)
             dp.to_csv(ppath, **kwargs)
             self.log.info(f"{len(dp)} L3 products added to: {ppath}")
 
@@ -720,11 +743,10 @@ if __name__ == "__main__":
     parser.add_argument("--skope", type=str, default="jwst", help="")
     parser.add_argument("--pfx", "-p", type=str, default="", help="file name prefix to limit search on local disk")
     parser.add_argument("--outpath", "-o", type=str, default=None, help="path to save preprocessed ingest files on local disk")
-    parser.add_argument("--apriori", "-a", action="store_true", help="include prior unmatched L1 data from outpath")
-    parser.add_argument("--level1", "-l", action="store_true", help="save matched level 1 input data to separate file")
+    parser.add_argument("--l1", action="store_true", help="save matched level 1 input data to separate file")
     args = parser.parse_args()
     if args.skope.lower() == "jwst":
         os.makedirs(args.outpath, exist_ok=True)
         kwargs = dict(input_path=args.input_path, pfx=args.pfx, outpath=args.outpath)
         jc = JwstCalIngest(**kwargs)
-        jc.run_ingest(apriori=args.apriori, save_l1=args.level1)
+        jc.run_ingest(save_l1=args.level1)

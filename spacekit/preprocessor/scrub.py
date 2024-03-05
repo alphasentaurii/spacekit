@@ -1,5 +1,6 @@
 import os
 import glob
+import re
 import time
 import pandas as pd
 import numpy as np
@@ -828,53 +829,111 @@ class JwstCalScrubber(Scrubber):
         else:
             self.fgs_products[p] = {k: v}
 
-    def fake_target_numbers(self):
+    def fake_target_ids(self):
+        """Assigns a fake target ID using TARGNAME, TARG_RA or GS_MAG. These IDs are fake in that
+        they're unlikely to match actual target IDs assigned later in the pipeline. For source-based exposures, 
+        the id is always "s00001". Exposures with TARGNAME=NaN are grouped by TARG_RA if VISITYPE="PRIME_TARGETED_FIXED"; the remainder by GS_MAG except those where GS_MAG=NaN (typically VISITYPE=PARALLEL_PURE) which default to 't0'.
+        """
         targ_exptypes = [t for t in self.level3_types if t not in self.source_based]
+        # TARGNAME: default grouping strategy
         targetnames = list(set(
             [
                 v['TARGNAME'] for v in self.exp_headers.values() \
                     if v['EXP_TYPE'] in targ_exptypes and \
-                        isinstance(v['TARGNAME'], str)
+                        v['TARGNAME'] not in [np.nan, 'NONE']
             ]
         ))
         tnums = [f"t{i+1}" for i, _ in enumerate(targetnames)]
-        tnames = dict(zip(targetnames, tnums))
+        tn = dict(zip(targetnames, tnums))
 
+        # TARG_RA: TARGNAME=NAN + VISITYPE=PTF
+        targra = list(set([
+                v['TARG_RA'] for v in self.exp_headers.values() \
+                    if v['EXP_TYPE'] in targ_exptypes and\
+                        v['TARGNAME'] not in targetnames and \
+                            v['VISITYPE'] == "PRIME_TARGETED_FIXED"
+            ]
+        ))
+        rnums = [f"t{i+1}" for i, _ in enumerate(targra)]
+        rn = dict(zip(targra, rnums))
+
+        # GS_MAG
         gstargs = list(set(
             [
                 v['GS_MAG'] for v in self.exp_headers.values() \
-                    if v['EXP_TYPE'] in targ_exptypes and \
-                        isinstance(v['TARGNAME'], float)
+                    if not np.isnan(v['GS_MAG']) and\
+                        v['EXP_TYPE'] in targ_exptypes and \
+                            v['TARGNAME'] not in targetnames and \
+                                v['VISITYPE'] != "PRIME_TARGETED_FIXED"
             ]
         ))
         gnums = [f"t{i+1}" for i, _ in enumerate(gstargs)]
-        gnames = dict(zip(gstargs, gnums))
+        gn = dict(zip(gstargs, gnums))
 
-        return tnames, gnames
+        self.targetnames = targetnames
+        self.tn = tn
+        return tn, rn, gn
 
     def get_level3_products(self):
         """Determines potential L3 products based on groups of input exposures 
-        with matching Fits keywords prog+obs+optelem+fxd_slit+subarray.
-        The L3 products are assigned a fake "target number" using a count of unique 
-        GS_MAG values.
+        with matching Fits keywords prog+obs+optelem+fxd_slit+subarray. These groups
+        are further subdivided and assigned a fake target ID by TARGNAME, GS_MAG or TARG_RA.
         """
         # targetnames = list(set([v["GS_MAG"] for v in self.exp_headers.values()]))
         # tnums = [f"t{i+1}" for i, _ in enumerate(targetnames)]
         # targs = dict(zip(targetnames, tnums))
-        tnames, gnames = self.fake_target_numbers()
+        tn, rn, gn = self.fake_target_ids()
 
         for k, v in self.exp_headers.items():
             exp_type = v["EXP_TYPE"]
             if exp_type in self.level3_types:
                 if exp_type in self.source_based:
-                    tnum = 's00001'
+                    tnum = 's00001'         
                 else:
-                    tnum = tnames.get(v['TARGNAME'], gnames.get(v['GS_MAG'], 't0'))
-                # tnum = targs.get(v["GS_MAG"], 't0')
+                    tnum = tn.get(v['TARGNAME'], rn.get(v['TARG_RA'], gn.get(v['GS_MAG'], 't0')))
                 if "IMAGE" in exp_type.split("_")[-1]:
                     self.make_image_product_name(k, v, tnum)
                 else:
                     self.make_spec_product_name(k, v, tnum)
+        self.verify_target_groups()
+
+    def verify_target_groups(self):
+        """Certain L3 products need to be further defined by their L1 input TARG_RA
+        values in addition to all other parameters. This only affects PRIME_TARGETED_FIXED
+        visit types where TARGNAME is not NaN. If multiple unique TARG_RA values (rounded to 6 digits) 
+        are identified within the group of exposures, we can assume each TARG_RA grouping is a unique L3 product.
+        """
+        revised = dict()
+        for expmode, data in self.expdata.items():
+            multitra = [
+                k for k, v in data.items() \
+                    if np.unique([np.round(j['TARG_RA'], 6) for j in v.values()]).size > 1 and \
+                        list(v.values())[0]['VISITYPE'] == 'PRIME_TARGETED_FIXED' and \
+                            list(v.values())[0]['TARGNAME'] in self.targetnames
+            ]
+            if multitra:
+                revised[expmode] = multitra
+
+        tgroups = {k:{} for k in list(revised.keys())}
+        for expmode, products in revised.items():
+            for k in products:
+                tgroups[expmode][k] = dict()
+                v = self.expdata[expmode][k]
+                tname = list(v.values())[0]['TARGNAME']
+                targras = np.unique([np.round(j['TARG_RA'], 6) for j in v.values()])
+                tnum = self.tn.get(tname)
+                for i, t in enumerate(targras):
+                    exposures = [x for x, y in v.items() if np.round(y['TARG_RA'], 6) == t]
+                    k2 = k.replace(tnum, tnum+f"x{i}")
+                    tgroups[expmode][k][k2] = {e:v[e] for e in exposures}
+
+        for expmode in tgroups.keys():
+            expdata = self.expdata[expmode]
+            ks = list(tgroups[expmode].keys())
+            for k in ks:
+                for k2, grp in tgroups[expmode][k].items():
+                    expdata.update({k2:grp})
+                del expdata[k]
 
     def update_fgs(self):
         self.fgspix = dict()
