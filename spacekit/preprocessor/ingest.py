@@ -743,10 +743,11 @@ if __name__ == "__main__":
     parser.add_argument("--skope", type=str, default="jwst", help="")
     parser.add_argument("--pfx", "-p", type=str, default="", help="file name prefix to limit search on local disk")
     parser.add_argument("--outpath", "-o", type=str, default=None, help="path to save preprocessed ingest files on local disk")
-    parser.add_argument("--l1", action="store_true", help="save matched level 1 input data to separate file")
+    parser.add_argument("--skipl1", action="store_true", help="do NOT save matched level 1 input data to separate file")
     args = parser.parse_args()
     if args.skope.lower() == "jwst":
         os.makedirs(args.outpath, exist_ok=True)
         kwargs = dict(input_path=args.input_path, pfx=args.pfx, outpath=args.outpath)
         jc = JwstCalIngest(**kwargs)
-        jc.run_ingest(save_l1=args.level1)
+        save_l1 = False if args.skipl1 else True
+        jc.run_ingest(save_l1=save_l1)
