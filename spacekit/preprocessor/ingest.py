@@ -374,14 +374,15 @@ class JwstCalIngest:
             return
         self.log.info("Checking prior data")
         di = self.load_and_recast(self.ingest_file)
-        di = di.sort_values(by='date', ascending=False).drop_duplicates(subset='dname', keep='first')
+        di = di.sort_values(by='date').drop_duplicates(subset='dname', keep='last')
         ds = di.loc[di.params.isin(subcheck)].copy()
         if len(ds) > 0:
             try:
                 self.df = pd.concat([self.df, ds], axis=0)
                 self.log.info(f"Prior data loaded successfully: {len(ds)} exposures added.")
                 self.update_dags()
-                self.df.drop_duplicates(subset='dname', keep='first', inplace=True)
+                # don't assume "prior" == older
+                self.df = self.df.sort_values(by='date').drop_duplicates(subset='dname', keep='last')
                 di.drop(ds.index, axis=0, inplace=True)
                 di[self.idxcol] = di.index
                 di.to_csv(self.ingest_file, index=False)
@@ -404,7 +405,12 @@ class JwstCalIngest:
         self.df = self.recast_dtypes(self.df)
         self.drop_dupes(priority1='date', priority2='imagesize', subset='dname')
         self.df.set_index('dname', drop=False, inplace=True)
-        params = list(map(lambda x: '-'.join([str(y) for y in x if y != "NONE"]),  self.df[self.param_cols].values))
+        params = list(
+            map(
+                lambda x: '-'.join([str(y) for y in x if str(y) not in  ["NONE", "NaN", "nan", "0", "False"]]),  
+                self.df[self.param_cols].values
+            )
+        )
         self.df['params'] = pd.DataFrame(params, index=self.df.index)
         self.drop_mosaics()
         self.df.drop('Dataset', axis=1, inplace=True)

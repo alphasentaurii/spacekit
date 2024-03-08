@@ -36,8 +36,12 @@ def check_imports():
 
 class Radio:
     """Class for querying and downloading .fits files from a MAST s3 bucket on AWS.
-    Note this was originally created for K2 LLC data and is in the process of being revised
-    for other data types/telescopes..."""
+    TODO: overhaul for multi-mission (HST, JWST)
+    TODO: generalize mast_download() for other missions and options (put mission specific methods into subclasses)
+    TODO: change "config" attr to "cloud"
+
+
+    """
 
     def __init__(self, config="disable", name="Radio", **log_kws):
         """Instantiates a spacekit.extractor.Radio object.
