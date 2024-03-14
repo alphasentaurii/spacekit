@@ -264,7 +264,7 @@ class JwstCalIngest:
         self.product_matches = None
         self.exmatches = {}
         self.rem = {}
-        self.param_cols = ['pid', 'OBSERVTN', 'FILTER', 'GRATING', 'PUPIL', 'SUBARRAY', 'EXP_TYPE']
+        self.param_cols = ['pid', 'OBSERVTN', 'FILTER', 'GRATING', 'PUPIL', 'SUBARRAY', 'FXD_SLIT', 'EXP_TYPE']
         self.scrb = None
         self.ingest_file = os.path.join(self.outpath, "ingest.csv")
         self.trainpath = self.outpath + "/train-{}.csv"
@@ -394,6 +394,27 @@ class JwstCalIngest:
         self.l1_dags = [d for d in alldags if '1' in d]
         self.l3_dags = [d for d in alldags if '3' in d]
 
+    def set_params(self):
+        wftypes= ['PRIME_WFSC_SENSING_ONLY', 'PRIME_WFSC_ROUTINE', 'PRIME_WFSC_SENSING_CONTROL']
+        wfcols = ['pid', 'OBSERVTN', 'FILTER', 'PUPIL', 'DETECTOR']
+        wfsc = self.df.loc[self.df['VISITYPE'].isin(wftypes)].copy()
+        self.df.drop(wfsc.index, axis=0, inplace=True)
+        params = list(
+            map(
+                lambda x: '-'.join([str(y) for y in x if str(y) not in  ["NONE", "NaN", "nan", "0", "False", "f"]]),  
+                self.df[self.param_cols].values
+            )
+        )
+        self.df['params'] = pd.DataFrame(params, index=self.df.index)
+        wfparams = list(
+            map(
+                lambda x: '-'.join([str(y) for y in x if str(y) not in  ["NONE", "NaN", "nan", "0", "False", "f"]]),  
+                wfsc[wfcols].values
+            )
+        )
+        wfsc['params'] = pd.DataFrame(wfparams, index=wfsc.index)
+        self.df = pd.concat([self.df, wfsc], axis=0)
+
     def initial_scrub(self):
         if self.df is None:
             return
@@ -405,13 +426,7 @@ class JwstCalIngest:
         self.df = self.recast_dtypes(self.df)
         self.drop_dupes(priority1='date', priority2='imagesize', subset='dname')
         self.df.set_index('dname', drop=False, inplace=True)
-        params = list(
-            map(
-                lambda x: '-'.join([str(y) for y in x if str(y) not in  ["NONE", "NaN", "nan", "0", "False"]]),  
-                self.df[self.param_cols].values
-            )
-        )
-        self.df['params'] = pd.DataFrame(params, index=self.df.index)
+        self.set_params()
         self.drop_mosaics()
         self.df.drop('Dataset', axis=1, inplace=True)
 

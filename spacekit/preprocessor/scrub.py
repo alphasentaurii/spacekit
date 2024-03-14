@@ -725,8 +725,14 @@ class JwstCalScrubber(Scrubber):
             optelem = f"{pupil}-{fltr}"
         else:
             optelem =  f"{fltr}-{pupil}"
-
-        p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{subarray}".lower()
+        
+        if 'WFSC' in v['VISITYPE']:
+            if not subarray:
+                p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}-{v['DETECTOR']}".lower()
+            else: # ignore nrca3 target acquisition exposures (subarray != "FULL")
+                return
+        else:
+            p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{subarray}".lower()
 
         if v['EXP_TYPE'] in self.coron_ami or v["TSOVISIT"] in TRUEVALS:
             self.make_tac_product_name(k, v, p)
@@ -879,9 +885,6 @@ class JwstCalScrubber(Scrubber):
         with matching Fits keywords prog+obs+optelem+fxd_slit+subarray. These groups
         are further subdivided and assigned a fake target ID by TARGNAME, GS_MAG or TARG_RA.
         """
-        # targetnames = list(set([v["GS_MAG"] for v in self.exp_headers.values()]))
-        # tnums = [f"t{i+1}" for i, _ in enumerate(targetnames)]
-        # targs = dict(zip(targetnames, tnums))
         tn, rn, gn = self.fake_target_ids()
 
         for k, v in self.exp_headers.items():
@@ -987,6 +990,7 @@ class JwstCalScrubber(Scrubber):
         dtype_keys = self.get_dtype_keys()
         nandler = NaNdler(self.df, dtype_keys, allow_neg=False, verbose=False)
         self.df = nandler.apply_nandlers()
+        self.group_nircam_detectors()
         self.log.info(f"Encoding categorical features [{exp_type}]")
         encoder = JwstEncoder(
             self.df, fkeys=dtype_keys["categorical"], encoding_pairs=self.encoding_pairs
@@ -994,6 +998,19 @@ class JwstCalScrubber(Scrubber):
         encoder.encode_features()
         self.df = encoder.df[xcols]
         return self.df
+
+    def group_nircam_detectors(self):
+        detectors = list(self.df['detector'].unique())
+        nrca = [d for d in detectors if 'NRCA' in d and 'NRCB' not in d]
+        nrcb = [d for d in detectors if 'NRCB' in d and 'NRCA' not in d]
+        nrcs = [d for d in nrca + nrcb if '|' not in d] # single (any)
+        multi_nrca = [d for d in nrca if '|' in d] # multiple A
+        multi_nrcb = [d for d in nrcb if '|' in d] # multiple B
+        multi_nrcab = [d for d in detectors if 'NRCA' in d and 'NRCB' in d] # A + B
+        self.df.loc[self.df['detector'].isin(nrcs), 'detector'] = 'NRC-S'
+        self.df.loc[self.df['detector'].isin(multi_nrca), 'detector'] = 'NRCA-M'
+        self.df.loc[self.df['detector'].isin(multi_nrcb), 'detector'] = 'NRCB-M'
+        self.df.loc[self.df['detector'].isin(multi_nrcab), 'detector'] = 'NRC-M'
 
     def get_dtype_keys(self):
         """Group input metadata into pre-set data types before applying NaNdlers.
