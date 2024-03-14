@@ -377,17 +377,16 @@ class JwstCalIngest:
         di = di.sort_values(by='date').drop_duplicates(subset='dname', keep='last')
         ds = di.loc[di.params.isin(subcheck)].copy()
         if len(ds) > 0:
+            self.log.info(f"Prior data loaded successfully: {len(ds)} exposures added.")
             try:
-                self.df = pd.concat([self.df, ds], axis=0)
-                self.log.info(f"Prior data loaded successfully: {len(ds)} exposures added.")
-                self.update_dags()
-                # don't assume "prior" == older
-                self.df = self.df.sort_values(by='date').drop_duplicates(subset='dname', keep='last')
-                di.drop(ds.index, axis=0, inplace=True)
-                di[self.idxcol] = di.index
-                di.to_csv(self.ingest_file, index=False)
+                self.df = pd.concat([self.df, ds], axis=0)   
             except Exception as e:
                 self.log.error(str(e))
+            self.update_dags()
+            self.df = self.df.sort_values(by='date').drop_duplicates(subset='dname', keep='last')
+            di.drop(ds.index, axis=0, inplace=True)
+            di[self.idxcol] = di.index
+            di.to_csv(self.ingest_file, index=False)
 
     def update_dags(self):
         alldags = sorted(list(self.df[self.dag].value_counts().index))
@@ -406,14 +405,15 @@ class JwstCalIngest:
             )
         )
         self.df['params'] = pd.DataFrame(params, index=self.df.index)
-        wfparams = list(
-            map(
-                lambda x: '-'.join([str(y) for y in x if str(y) not in  ["NONE", "NaN", "nan", "0", "False", "f"]]),  
-                wfsc[wfcols].values
+        if len(wfsc) > 0:
+            wfparams = list(
+                map(
+                    lambda x: '-'.join([str(y) for y in x if str(y) not in  ["NONE", "NaN", "nan", "0", "False", "f"]]),  
+                    wfsc[wfcols].values
+                )
             )
-        )
-        wfsc['params'] = pd.DataFrame(wfparams, index=wfsc.index)
-        self.df = pd.concat([self.df, wfsc], axis=0)
+            wfsc['params'] = pd.DataFrame(wfparams, index=wfsc.index)
+            self.df = pd.concat([self.df, wfsc], axis=0)
 
     def initial_scrub(self):
         if self.df is None:
