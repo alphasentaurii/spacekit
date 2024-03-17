@@ -365,17 +365,10 @@ class JwstCalIngest:
             self.log.debug("Prior data not found -- skipping.")
             return
         l3params = self.df.loc[self.df.dag.isin(self.l3_dags)].params.unique()
-        subcheck = []
-        for param in l3params:
-            cnt = self.df.loc[(self.df.params == param) & (self.df.dag.isin(self.l1_dags))].dname.count()
-            if cnt == 0:
-                subcheck.append(param)
-        if not subcheck:
-            return
         self.log.info("Checking prior data")
         di = self.load_and_recast(self.ingest_file)
         di = di.sort_values(by='date').drop_duplicates(subset='dname', keep='last')
-        ds = di.loc[di.params.isin(subcheck)].copy()
+        ds = di.loc[di.params.isin(l3params)].copy()
         if len(ds) > 0:
             self.log.info(f"Prior data loaded successfully: {len(ds)} exposures added.")
             try:
@@ -625,6 +618,7 @@ class JwstCalIngest:
                 imagesize = l3.iloc[0]['imagesize']
                 self.data[exp_type].loc[k, 'pname'] = pname
                 self.data[exp_type].loc[k, 'imagesize'] = imagesize
+                self.data[exp_type].loc[k, 'date'] = l3.iloc[0]['date']
                 self.df.loc[pname, 'pname'] = pname
                 self.df.loc[self.df.dname.isin(exposures), 'pname'] = pname
                 self.df.loc[self.df.pname == pname, 'expmode'] = exp_type
@@ -701,6 +695,7 @@ class JwstCalIngest:
                 for k, v in revised.items():
                     dp.loc[name, k] = v
                 data.loc[data.pname == name, 'imagesize'] = revised['imagesize']
+                data.loc[data.pname == name, 'date'] = revised['date']
             data = self.convert_imagesize_units(data=data)
             data[self.idxcol] = data.index
             data.to_csv(self.trainpath.format(exp_type.lower()), index=False)
@@ -730,7 +725,6 @@ class JwstCalIngest:
 
     def save_ingest_data(self, save_l1=True):
         self.df[self.idxcol] = self.df.index
-        
         if 'pname' not in self.df.columns:
             di = self.df.loc[self.df.dag.isin(self.l1_dags)]
         else:

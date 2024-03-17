@@ -66,7 +66,6 @@ class JwstCalPredict:
         self.tx_data = None
         self.X = None
         self.img3_reg = None
-        # self.img3_clf = None
         self.spec3_reg = None
         self.__name__ = "JwstCalPredict"
         self.log = Logger(self.__name__, **log_kws).setup_logger(logger=SPACEKIT_LOG)
@@ -125,25 +124,10 @@ class JwstCalPredict:
         if not os.path.exists(self.input_path):
             self.log.error(f"No files/directories found at the specified path: {self.input_path}")
             raise FileNotFoundError
-
         if self.pid is not None and os.path.isdir(self.input_path):
-            program_id = str(self.pid)
-            if not program_id.startswith("jw"):
-                program_id = (
-                    f"jw0{program_id}" if len(program_id) == 4 else f"jw{program_id}"
-                )
-                self.pid = program_id
-                # obs can only be used if PID is known
-                if self.obs is not None:
-                    try:
-                        obsnum = str(int(self.obs))
-                        if len(obsnum) < 3:
-                            obsnum = f"0{obsnum}" if len(obsnum) == 2 else f"00{obsnum}"
-                        self.obs = obsnum
-                    except ValueError:
-                        self.log.warning(f"Unrecognized format - 'obs' must be 1-3 digits. You entered: {self.obs}")
-                        self.obs = ""
-                    self.pid += self.obs
+            self.pid = 'jw{:0>5}'.format(str(self.pid).lstrip('jw'))
+            if self.obs is not None:
+                self.pid += '{:0>3}'.format(self.obs)
         else:
             self.log.debug("Acquiring data from single input file")
             fname = str(os.path.basename(self.input_path))
@@ -175,19 +159,13 @@ class JwstCalPredict:
             encoding_pairs=KEYPAIR_DATA,
             **self.log_kws,
         )
-        for exp_type in ["IMAGE", "SPEC"]:  # ["IMAGE", "SPEC", "TAC", "FGS"]:
+        for exp_type in ["IMAGE", "SPEC"]:
             inputs = scrubber.scrub_inputs(exp_type=exp_type)
             if inputs is not None:
                 self.input_data[exp_type] = inputs
                 self.inputs[exp_type] = self.normalize_inputs(inputs, order=exp_type)
 
     def load_models(self, models={}):
-        # self.img3_clf = models.get(
-        #     "img3_clf",
-        #     load_pretrained_model(
-        #         model_path=self.model_path, name="img3_clf", **self.log_kws
-        #     ),
-        # )
         self.img3_reg = models.get(
             "img3_reg",
             load_pretrained_model(
@@ -233,13 +211,11 @@ class JwstCalPredict:
             return
         product_index = list(input_data.index)
         imgsize = self.regressor(self.img3_reg.model, X)
-        # imgbin, pred_proba = self.classifier(self.img3_clf.model, X)
         for i, _ in enumerate(X):
             rpred = np.round(float(imgsize[i]), 2)
             self.predictions[product_index[i]] = {
                 "gbSize": rpred
-            }  # "imgBin": imgbin[0]
-            # self.probabilities[product_index[i]] = {"probabilities": pred_proba[0]}
+            }
 
     def run_spec_inference(self):
         input_data = self.input_data.get("SPEC", None)
@@ -248,13 +224,11 @@ class JwstCalPredict:
             return
         product_index = list(input_data.index)
         imgsize = self.regressor(self.spec3_reg.model, X)
-        # imgbin, pred_proba = self.classifier(self.img3_clf.model, X)
         for i, _ in enumerate(X):
             rpred = np.round(float(imgsize[i]), 2)
             self.predictions[product_index[i]] = {
                 "gbSize": rpred
-            }  # "imgBin": imgbin[0]
-            # self.probabilities[product_index[i]] = {"probabilities": pred_proba[0]}
+            }
 
     def run_inference(self):
         if not self.inputs:
@@ -263,7 +237,6 @@ class JwstCalPredict:
         self.run_image_inference()
         self.run_spec_inference()
         self.log.info(f"predictions: {self.predictions}")
-        # self.log.info(f"probabilities: {self.probabilities}")
 
 
 def predict_handler(input_path, **kwargs):
