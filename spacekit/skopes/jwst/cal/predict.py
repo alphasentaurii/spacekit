@@ -71,7 +71,6 @@ class JwstCalPredict:
         self.log = Logger(self.__name__, **log_kws).setup_logger(logger=SPACEKIT_LOG)
         self.log_kws = dict(log=self.log, **log_kws)
         self.predictions = dict()
-        self.probabilities = dict()
         self.initialize_models()
 
     def initialize_models(self):
@@ -89,10 +88,7 @@ class JwstCalPredict:
         norm_cols = NORM_COLS.get(order, self.norm_cols)
         if self.norm:
             self.log.info(f"Applying normalization [{order}]...")
-            if os.path.basename(self.tx_file) == "tx_data.json": # default
-                tx_file = self.tx_file.split(".")[0] + f"-{order.lower()}.json"  # "{path}/tx_data-image.json"
-            else:
-                tx_file = self.tx_file
+            tx_file = self.tx_file.format(order.lower())
             Px = PowerX(
                 inputs, cols=norm_cols, tx_file=tx_file, rename=None, join_data=1
             )
@@ -140,13 +136,12 @@ class JwstCalPredict:
                 except ValueError:
                     self.obs = ''
                 self.pid += self.obs
-            self.log.info(self.pid)
         else:
             self.pid = ""
             return
 
 
-    def preprocess(self):
+    def preprocess(self, expmodes=["IMAGE", "SPEC"]):
         self.input_data = dict(
             IMAGE=None,
             SPEC=None,
@@ -168,8 +163,7 @@ class JwstCalPredict:
             encoding_pairs=KEYPAIR_DATA,
             **self.log_kws,
         )
-        self.log.info(scrubber.exp_headers.keys())
-        for exp_type in ["IMAGE", "SPEC"]:
+        for exp_type in expmodes:
             inputs = scrubber.scrub_inputs(exp_type=exp_type)
             if inputs is not None:
                 self.input_data[exp_type] = inputs
@@ -182,20 +176,18 @@ class JwstCalPredict:
                 model_path=self.model_path, name="img3_reg", **self.log_kws
             ),
         )
-        # TODO
-        # self.spec3_reg = models.get(
-        #     "spec3_reg",
-        #     load_pretrained_model(
-        #         model_path=self.model_path, name="spec3_reg", **self.log_kws
-        #     ),
-        # )
+        #self.img3_reg.find_tx_file(name="tx_data.json")
+        self.spec3_reg = models.get(
+            "spec3_reg",
+            load_pretrained_model(
+                model_path=self.model_path, name="spec3_reg", **self.log_kws
+            ),
+        )
+        #self.spec3_reg.find_tx_file(name="tx_data-spec.json")
         if self.model_path is None:
             self.model_path = os.path.dirname(self.img3_reg.model_path)
         if self.tx_file is None or not os.path.exists(self.tx_file):
-            # TODO
-            # self.img3_reg.find_tx_file(name="tx_data-image.json")
-            self.img3_reg.find_tx_file(name="tx_data.json")
-            self.tx_file = self.img3_reg.tx_file
+            self.tx_file = self.model_path + "/tx_data-{}.json"
 
     def classifier(self, model, data):
         """Returns class prediction"""
