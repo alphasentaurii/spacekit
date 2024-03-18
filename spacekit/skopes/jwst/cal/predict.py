@@ -124,17 +124,26 @@ class JwstCalPredict:
         if not os.path.exists(self.input_path):
             self.log.error(f"No files/directories found at the specified path: {self.input_path}")
             raise FileNotFoundError
-        if self.pid is not None and os.path.isdir(self.input_path):
-            self.pid = 'jw{:0>5}'.format(str(self.pid).lstrip('jw'))
-            if self.obs is not None:
-                self.pid += '{:0>3}'.format(self.obs)
-        else:
-            self.log.debug("Acquiring data from single input file")
+        elif os.path.isfile(self.input_path):
             fname = str(os.path.basename(self.input_path))
+            self.log.debug("Acquiring data from single input file")
             # reset input path to parent directory
             self.input_path = os.path.dirname(self.input_path)
             prefix = fname.split("_")[0][:10]
             self.pid = prefix
+            return
+        if self.pid is not None:
+            self.pid = 'jw{:0>5}'.format(str(self.pid).lstrip('jw'))
+            if self.obs:
+                try:
+                    self.obs = '{:0>3}'.format(int(self.obs))
+                except ValueError:
+                    self.obs = ''
+                self.pid += self.obs
+            self.log.info(self.pid)
+        else:
+            self.pid = ""
+            return
 
 
     def preprocess(self):
@@ -159,6 +168,7 @@ class JwstCalPredict:
             encoding_pairs=KEYPAIR_DATA,
             **self.log_kws,
         )
+        self.log.info(scrubber.exp_headers.keys())
         for exp_type in ["IMAGE", "SPEC"]:
             inputs = scrubber.scrub_inputs(exp_type=exp_type)
             if inputs is not None:
@@ -233,9 +243,12 @@ class JwstCalPredict:
     def run_inference(self):
         if not self.inputs:
             self.preprocess()
-        self.log.info("Estimating Level 3 output image sizes...")
-        self.run_image_inference()
-        self.run_spec_inference()
+        if self.img3_reg:
+            self.log.info("Estimating memory footprints : L3 IMAGE")
+            self.run_image_inference()
+        if self.spec3_reg:
+            self.log.info("Estimating memory footprints : L3 SPEC")
+            self.run_spec_inference()
         self.log.info(f"predictions: {self.predictions}")
 
 

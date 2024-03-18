@@ -78,7 +78,6 @@ class Scrubber:
             new = self.col_splitter()
         hc = dict(zip(old, new))
         self.df.rename(hc, axis="columns", inplace=True)
-        self.log.debug(f"New column names: {self.df.columns}")
 
     def drop_nans(self, save_backup=True):
         if self.dropnans is True:
@@ -846,7 +845,7 @@ class JwstCalScrubber(Scrubber):
             [
                 v['TARGNAME'] for v in self.exp_headers.values() \
                     if v['EXP_TYPE'] in targ_exptypes and \
-                        v['TARGNAME'] not in [np.nan, 'NONE']
+                        v['TARGNAME'] not in NANVALS
             ]
         ))
         tnums = [f"t{i+1}" for i, _ in enumerate(targetnames)]
@@ -867,7 +866,7 @@ class JwstCalScrubber(Scrubber):
         gstargs = list(set(
             [
                 v['GS_MAG'] for v in self.exp_headers.values() \
-                    if not np.isnan(v['GS_MAG']) and\
+                    if v['GS_MAG'] not in NANVALS and\
                         v['EXP_TYPE'] in targ_exptypes and \
                             v['TARGNAME'] not in targetnames and \
                                 v['VISITYPE'] != "PRIME_TARGETED_FIXED"

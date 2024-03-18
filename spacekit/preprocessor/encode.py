@@ -244,10 +244,11 @@ class CategoricalEncoder:
             enc = PairEncoder()
             enc.fit_transform(self.df, keypairs, axiscol=col)
             self.df[name] = enc.transformed
-            self.log.debug(f"*** {col} --> {name} ***")
-            self.log.debug(
-                f"\n\nORIGINAL:\n{self.df[col].value_counts()}\n\nENCODED:\n{self.df[name].value_counts()}\n"
-            )
+            if self.verbose:
+                self.log.debug(f"*** {col} --> {name} ***")
+                self.log.debug(
+                    f"\n\nORIGINAL:\n{self.df[col].value_counts()}\n\nENCODED:\n{self.df[name].value_counts()}\n"
+                )
         self.rejoin_original()
         return self.df
 

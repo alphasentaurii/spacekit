@@ -56,6 +56,7 @@ JWST_SCRUBBED_COLS = [
     'filter',
     'pupil',
     'grating',
+    'fxd_slit',
     'channel',
     'subarray',
     'bkgdtarg',
@@ -63,6 +64,7 @@ JWST_SCRUBBED_COLS = [
     'tsovisit',
     'nexposur',
     'numdthpt',
+    'band',
     'targ_max_offset',
     'offset',
     'max_offset',
@@ -127,11 +129,11 @@ def test_scrub_cols(raw_svm_data, single_visit_path):
 @mark.scrub
 def test_jwst_cal_scrubber(jwstcal_input_path):
     scrubber = JwstCalScrubber(jwstcal_input_path, encoding_pairs=KEYPAIR_DATA)
-    assert len(scrubber.fpaths) == 10
+    assert len(scrubber.fpaths) == 12
     assert len(scrubber.imgpix) == 3
     imgpix_products = list(scrubber.imgpix.keys())
     for product in imgpix_products:
-        assert len(scrubber.imgpix[product].keys()) == 46
+        assert len(scrubber.imgpix[product].keys()) == 48
     image_inputs = scrubber.scrub_inputs(exp_type="IMAGE")
     assert len(image_inputs) == 3
     assert list(image_inputs.columns) == JWST_SCRUBBED_COLS
