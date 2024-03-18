@@ -365,7 +365,7 @@ class JwstCalPrep(Prep):
         else:
             super().stratify_split(y_target=self.y_target, stratify=False)
         self.X_train, self.X_test = super().get_X_train_test()
-        fname = f"tx_data-{self.exp_mode}.json",
+        fname = f"tx_data-{self.exp_mode}.json"
         super().apply_normalization(T=PowerX, cols=self.norm_cols, rename=None, join=1, save_as=fname)
         self.X_train = self.X_train[self.X_cols]
         self.X_test = self.X_test[self.X_cols]
