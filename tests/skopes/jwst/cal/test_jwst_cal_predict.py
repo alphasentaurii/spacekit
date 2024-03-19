@@ -2,16 +2,11 @@ from pytest import mark
 from spacekit.skopes.jwst.cal.predict import JwstCalPredict, predict_handler
 
 
-# EXPECTED = {
-#     "niriss": {"gbSize": 2.57},
-#     "miri": {"gbSize": 0.79},
-#     "nircam": {"gbSize": 3.8},
-# }
-# TEMPORARY UNTIL RETRAINED MODEL ADDED (uses new encodings)
 EXPECTED = {
-    'niriss': {'gbSize': 2121.42},
-    'nircam': {'gbSize': 2660.02},
-    'miri': {'gbSize': 1020.9}
+    "niriss": {"gbSize": 2.24},
+    "miri": {"gbSize": 3.5},
+    "nircam": {"gbSize": 1.46},
+    "nirspec": {"gbSize": 3.29}
 }
 
 
@@ -20,11 +15,16 @@ EXPECTED = {
 def test_jwst_cal_predict(jwstcal_input_path):
     jcal = JwstCalPredict(input_path=jwstcal_input_path)
     assert jcal.img3_reg.__name__ == "Builder"
+    assert jcal.model_path == 'models/jwst_cal'
+    assert jcal.tx_file == 'models/jwst_cal/tx_data-{}.json'
+
     assert jcal.img3_reg.blueprint == "jwst_img3_reg"
-    assert jcal.img3_reg.model_path == 'models/jwst_cal/img3_reg/img3_reg.keras'
-    assert jcal.tx_file == 'models/jwst_cal/img3_reg/tx_data.json'
     assert jcal.img3_reg.model.name == 'img3_reg'
-    assert len(jcal.img3_reg.model.layers) == 10
+    assert len(jcal.img3_reg.model.layers) == 11
+
+    assert jcal.spec3_reg.blueprint == "jwst_spec3_reg"
+    assert jcal.spec3_reg.model.name == 'spec3_reg'
+    assert len(jcal.spec3_reg.model.layers) == 13
     jcal.run_inference()
     assert len(jcal.input_data['IMAGE']) == 3
     assert jcal.inputs['IMAGE'].shape == (3, 18)
@@ -37,7 +37,7 @@ def test_jwst_cal_predict(jwstcal_input_path):
 @mark.predict
 def test_jwst_cal_predict_handler(jwstcal_input_path):
     jcal = predict_handler(jwstcal_input_path)
-    assert len(jcal.predictions) == 3
+    assert len(jcal.predictions) == 4
     for k, v in jcal.predictions.items():
         instr = k.split("_")[2]
         assert EXPECTED[instr]["gbSize"] == v["gbSize"]

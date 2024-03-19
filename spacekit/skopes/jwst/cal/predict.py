@@ -20,7 +20,7 @@ from spacekit.builder.architect import Builder
 
 # build from local filepath
 # MODEL_PATH = os.environ.get("MODEL_PATH", "./models/jwst_cal")
-# TX_FILE = os.path.join(MODEL_PATH, "tx_data.json")
+# TX_FILE = MODEL_PATH + "/tx_data-{}.json"
 
 
 def load_pretrained_model(**builder_kwargs):
@@ -176,14 +176,12 @@ class JwstCalPredict:
                 model_path=self.model_path, name="img3_reg", **self.log_kws
             ),
         )
-        #self.img3_reg.find_tx_file(name="tx_data.json")
         self.spec3_reg = models.get(
             "spec3_reg",
             load_pretrained_model(
                 model_path=self.model_path, name="spec3_reg", **self.log_kws
             ),
         )
-        #self.spec3_reg.find_tx_file(name="tx_data-spec.json")
         if self.model_path is None:
             self.model_path = os.path.dirname(self.img3_reg.model_path)
         if self.tx_file is None or not os.path.exists(self.tx_file):
@@ -265,7 +263,14 @@ if __name__ == "__main__":
         "--pid",
         type=int,
         default=None,
-        help="restrict to input files matching a specific program ID e.g. 1018",
+        help="restrict to exposures matching a specific program ID e.g. 1018",
+    )
+    parser.add_argument(
+        "-o",
+        "--obs",
+        type=int,
+        default=None,
+        help="restrict to exposures matching a specific observation number (requires --pid)",
     )
     parser.add_argument(
         "-n",
