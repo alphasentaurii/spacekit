@@ -10,7 +10,7 @@ from spacekit.extractor.scrape import JsonScraper
 from spacekit.preprocessor.scrub import HstSvmScrubber, JwstCalScrubber
 from spacekit.generator.draw import DrawMosaics
 from spacekit.analyzer.track import timer, record_metrics
-from spacekit.skopes.jwst.cal.config import KEYPAIR_DATA
+from spacekit.skopes.jwst.cal.config import KEYPAIR_DATA, L3_TYPES
 
 
 class SvmAlignmentIngest:
@@ -252,7 +252,7 @@ class JwstCalIngest:
         """
         self.input_path = input_path.rstrip("/") if input_path is not None else os.getcwd()
         self.pfx = pfx
-        self.outpath = input_path if outpath is None else outpath.rstrip("/")
+        self.set_outpath(value=outpath)
         self.exp_types = ["IMAGE", "SPEC", "TAC", "FGS"]
         self.files = []
         self.idxcol = "Dataset"
@@ -261,14 +261,12 @@ class JwstCalIngest:
         self.l1_dags = []
         self.l3_dags = []
         self.data = {}
+        self.raw = {}
         self.product_matches = None
         self.exmatches = {}
         self.rem = {}
         self.param_cols = ['pid', 'OBSERVTN', 'FILTER', 'GRATING', 'PUPIL', 'SUBARRAY', 'FXD_SLIT', 'EXP_TYPE']
         self.scrb = None
-        self.ingest_file = os.path.join(self.outpath, "ingest.csv")
-        self.trainpath = self.outpath + "/train-{}.csv"
-        self.rempath =  self.outpath + "/rem-{}.csv"
         self.__name__ = "JwstCalIngest"
         self.log = Logger(self.__name__, **log_kws).spacekit_logger()
 
@@ -288,13 +286,21 @@ class JwstCalIngest:
             'TARG_RA',
             'TARG_DEC'
         ]
+    
+    def set_outpath(self, value=None):
+        if value is None:
+            value = str(self.input_path)
+        self.outpath = value.rstrip("/")
+        self.ingest_file = os.path.join(self.outpath, "ingest.csv")
+        self.trainpath = self.outpath + "/train-{}.csv"
+        self.rempath =  self.outpath + "/rem-{}.csv"
+        self.rawpath = self.outpath + "/raw-{}.csv"
 
     def run_ingest(self, save_l1=True):
         self.ingest_data()
         if len(self.files) == 0:
             return
         self.initial_scrub()
-        self.drop_extra_miri_channels()
         self.load_priors()
         self.scrub_exposures()
         self.extrapolate()
@@ -337,6 +343,43 @@ class JwstCalIngest:
         self.l1_dags.extend([l for l in l1_dags if l not in self.l1_dags])
         self.l3_dags.extend([l for l in l3_dags if l not in self.l3_dags])
         return df
+
+    def initial_scrub(self):
+        if self.df is None:
+            return
+        self.df['dname'] = self.df.index
+        self.df['dname'] = self.df['dname'].apply(lambda x: self.strip_file_suffix(x))
+        self.df.rename({'ImageSize':'imagesize', self.dag: 'dag'}, axis=1, inplace=True)
+        self.dag = 'dag'
+        self.df['pid'] = self.df['dname'].apply(lambda x: self.extract_pid(x))
+        self.df = self.recast_dtypes(self.df)
+        n0 = len(self.df)
+        self.df = self.df.sort_values(by=['date', 'imagesize']).drop_duplicates(subset='dname', keep='last')
+        self.log.info(f"Dropped {n0 - len(self.df)} duplicates.")
+        nonsci = self.df.loc[~self.df['EXP_TYPE'].isin(L3_TYPES)]
+        self.df.drop(nonsci.index, axis=0, inplace=True)
+        self.log.info(f"Dropped {len(nonsci)} non-L3 exposure types")
+        self.set_params()
+        self.drop_extra_miri_channels()
+        self.drop_mosaics()
+        self.df['Dataset'] = self.df['dname']
+        self.df.set_index('Dataset', inplace=True)
+
+    def drop_extra_miri_channels(self):
+        """Keep only channel 1 of MIR_MRS L3 products, drop channels 2-4"""
+        ch234 = self.df.loc[
+            (
+                self.df['EXP_TYPE'] == "MIR_MRS"
+            ) & (
+                self.df[self.dag].isin(self.l3_dags)
+            ) & (
+                self.df['CHANNEL'] != '1'
+            )
+        ]
+        if len(ch234) > 0:
+            drops = ch234.index
+            self.log.info(f"Dropping channels 2-4 for {len(drops)/3} MIR_MRS L3 products")
+            self.df.drop(drops, axis=0, inplace=True)
 
     def load_and_recast(self, dpath, idxcol=None):
         if not os.path.exists(dpath):
@@ -391,13 +434,14 @@ class JwstCalIngest:
         wfcols = ['pid', 'OBSERVTN', 'FILTER', 'PUPIL', 'DETECTOR']
         wfsc = self.df.loc[self.df['VISITYPE'].isin(wftypes)].copy()
         self.df.drop(wfsc.index, axis=0, inplace=True)
-        params = list(
-            map(
-                lambda x: '-'.join([str(y) for y in x if str(y) not in  ["NONE", "NaN", "nan", "0", "False", "f"]]),  
-                self.df[self.param_cols].values
+        if len(self.df) > 0:
+            params = list(
+                map(
+                    lambda x: '-'.join([str(y) for y in x if str(y) not in  ["NONE", "NaN", "nan", "0", "False", "f"]]),  
+                    self.df[self.param_cols].values
+                )
             )
-        )
-        self.df['params'] = pd.DataFrame(params, index=self.df.index)
+            self.df['params'] = pd.DataFrame(params, index=self.df.index)
         if len(wfsc) > 0:
             wfparams = list(
                 map(
@@ -407,59 +451,6 @@ class JwstCalIngest:
             )
             wfsc['params'] = pd.DataFrame(wfparams, index=wfsc.index)
             self.df = pd.concat([self.df, wfsc], axis=0)
-
-    def initial_scrub(self):
-        if self.df is None:
-            return
-        self.df['dname'] = self.df.index
-        self.df['dname'] = self.df['dname'].apply(lambda x: self.strip_file_suffix(x))
-        self.df.rename({'ImageSize':'imagesize', self.dag: 'dag'}, axis=1, inplace=True)
-        self.dag = 'dag'
-        self.df['pid'] = self.df['dname'].apply(lambda x: self.extract_pid(x))
-        self.df = self.recast_dtypes(self.df)
-        self.drop_dupes(priority1='date', priority2='imagesize', subset='dname')
-        self.df.set_index('dname', drop=False, inplace=True)
-        self.set_params()
-        self.drop_mosaics()
-        self.df.drop('Dataset', axis=1, inplace=True)
-
-    def drop_dupes(self, priority1='date', priority2='imagesize', subset='dname'):
-        if priority1 is None:
-            self.df.drop_duplicates(subset=subset, inplace=True)
-            return
-        dupes = sorted(list(self.df.loc[self.df.duplicated(subset=subset)].dname))
-        self.df.loc[self.df.dname.isin(dupes), 'dupe'] = True
-        self.df.loc[self.df.dupe.isna(), 'dupe'] = False
-        # Initially all we're doing is marking datasets as duplicate, and unmarking those we wish to keep
-        # based on priority1 and priority2 (if specified). If duplicates match both priorities, we default
-        # to keeping only the last occurrence using pandas.drop_duplicates
-        for d in dupes:
-            max_priority1 = self.df.loc[self.df.dname == d][priority1].max()
-            mp1 = list(self.df.loc[self.df.dname == d][priority1].unique())
-            if len(mp1) > 1:
-                self.df.loc[(self.df.dname == d) & (self.df[priority1] == max_priority1), 'dupe'] = False
-            elif priority2 is not None:
-                    max_priority2 = self.df.loc[self.df.dname ==d][priority2].max()
-                    mp2 = list(self.df.loc[self.df.dname == d][priority2].unique())
-                    if len(mp2) > 1:
-                        self.df.loc[(self.df.dname == d) & (self.df[priority2] == max_priority2), 'dupe'] = False
-                    else:
-                        self.log.warning(f"Duplicates match on {priority1} and {priority2} - keeping last only")
-                        self.df.loc[self.df.dname == d, 'dupe'] = False
-            else:
-                self.log.warning(f"Duplicates match on {priority1} and priority2 not specified - keeping last only")
-                self.df.loc[(self.df.dname == d) & (self.df[priority1] == max_priority1), 'dupe'] = False
-        # Use numeric index since duplicates have same dataset name 
-        self.df.reset_index(inplace=True)
-        redupe = self.df.loc[self.df.dupe].index
-        if len(redupe) > 0:
-            self.log.info(f"Dropping {len(redupe)} duplicates (p1={priority1}, p2={priority2})")
-            self.df.drop(redupe, axis=0, inplace=True)
-        self.df.drop('dupe', axis=1, inplace=True)
-        dupes2 = sorted(list(self.df.loc[self.df.duplicated(subset=subset)].index))
-        if len(dupes2) > 0:
-            self.log.info(f"Dropping {len(dupes2)} duplicates (subset={subset})")
-            self.df.drop_duplicates(subset=subset, keep='last', inplace=True)
 
     @staticmethod
     def save_kwargs(path):
@@ -505,10 +496,10 @@ class JwstCalIngest:
         self.df['mosaic'] = self.df['dname'].apply(lambda x: self.mark_mosaics(x))
         mosaics = self.df.loc[self.df['mosaic']].copy()
         if len(mosaics) > 0:
+            mosaics.drop('mosaic', axis=1, inplace=True)
             mpath = f"{self.outpath}/mosaics.csv"
-            kwargs = self.save_kwargs(mpath)
             mosaics[self.idxcol] = mosaics.index
-            mosaics.to_csv(mpath, **kwargs)
+            mosaics.to_csv(mpath, **self.save_kwargs(mpath))
             self.log.info(f"Mosaic data saved to: {mpath}")
             self.log.info(f"Dropping {len(mosaics.index)} mosaics from ingest data")
             self.df.drop(mosaics.index, axis=0, inplace=True)
@@ -521,25 +512,26 @@ class JwstCalIngest:
                 encoding_pairs=KEYPAIR_DATA,
                 mode='df'
         )
-        nonsci = self.df.loc[~self.df['EXP_TYPE'].isin(self.scrb.level3_types)]
-        self.df.drop(nonsci.index, axis=0, inplace=True)
-        self.log.info(f"Dropped {len(nonsci)} non-L3 exposure types")
         for exp_type in self.exp_types:
             inputs = self.scrb.scrub_inputs(exp_type=exp_type)
             if inputs is not None:
                 inputs['dname'] = inputs.index
                 self.data[exp_type] = inputs
         (self.img, self.spec, self.tac, self.fgs) = self.get_unencoded()
+        self.raw = dict(zip(
+            ["IMAGE", "SPEC", "TAC", "FGS"], 
+            [self.img, self.spec, self.tac, self.fgs]
+        ))
 
     def get_unencoded(self):
         data = [self.scrb.imgpix, self.scrb.specpix, self.scrb.tacpix, self.scrb.fgspix]
         return map(lambda x: pd.DataFrame.from_dict(x, orient='index'), data)
 
     def extrapolate(self):
-        for exp_type in self.data.keys():
-            self.match_product_groups(exp_type)
-            if len(self.exmatches[exp_type]) > 0:
-                self.log.warning(f"Multiple matches in {exp_type}: {len(self.exmatches[exp_type])}")
+        for exp in self.data.keys():
+            self.match_product_groups(exp)
+            if len(self.exmatches[exp]) > 0:
+                self.log.warning(f"Multiple matches in {exp}: {len(self.exmatches[exp])}")
         self.drop_unmatched()
         self.convert_imagesize_units()
         if 'pname' not in self.df.columns:
@@ -561,7 +553,7 @@ class JwstCalIngest:
                 ) & (
                     self.df[self.dag].isin(self.l3_dags)
                 ) & (
-                    self.df[extra_param]== info[extra_param]
+                    self.df[extra_param] == info[extra_param]
                 )
             ]
             if len(l3) == 0: # drop extra search param
@@ -588,7 +580,6 @@ class JwstCalIngest:
         exp_type : str
             model-based 'exp_type' grouping: IMAGE, SPEC, TAC, or FGS
         """
-        self.log.info(f"Matching {exp_type} L1 exposures --> L3 products")
         self.exmatches[exp_type] = {}
         for k, v in self.scrb.expdata[exp_type].items():
             exposures = list(v.keys())
@@ -623,31 +614,19 @@ class JwstCalIngest:
                 self.df.loc[self.df.dname.isin(exposures), 'pname'] = pname
                 self.df.loc[self.df.pname == pname, 'expmode'] = exp_type
 
-    def drop_extra_miri_channels(self):
-        """Keep only channel 1 of MIR_MRS L3 products, drop channels 2-4"""
-        ch234 = self.df.loc[
-            (
-                self.df['EXP_TYPE'] == "MIR_MRS"
-            ) & (
-                self.df[self.dag].isin(self.l3_dags)
-            ) & (
-                self.df['CHANNEL'] != '1'
-            )
-        ]
-        if len(ch234) > 0:
-            drops = ch234.index
-            self.log.info(f"Dropping channels 2-4 for {len(drops)/3} MIR_MRS L3 products")
-            self.df.drop(drops, axis=0, inplace=True)
-
     def drop_unmatched(self):
-        for exp_type in list(self.data.keys()):
+        for exp in list(self.data.keys()):
+            extracols = [c for c in ['imagesize','date','pname'] if c in self.data[exp].columns]
+            self.raw[exp] = pd.concat([self.raw[exp], self.data[exp][extracols]], axis=1)
             try:
-                if 'imagesize' in self.data[exp_type].columns:
-                    self.rem[exp_type] = self.data[exp_type].loc[self.data[exp_type]['imagesize'].isna()].copy()
+                if 'imagesize' in self.raw[exp].columns:
+                    self.rem[exp] = self.raw[exp].loc[self.raw[exp]['imagesize'].isna()].copy()
                 else:
-                    self.rem[exp_type] = self.data[exp_type].copy()
-                self.data[exp_type].drop(self.rem[exp_type].index, axis=0, inplace=True)
-                self.log.info(f"[{exp_type}] L3 matched: {len(self.data[exp_type])} | remaining: {len(self.rem[exp_type])}")
+                    self.rem[exp] = self.raw[exp].copy()
+                n = len(self.data[exp])
+                self.data[exp].drop(self.rem[exp].index, axis=0, inplace=True)
+                self.raw[exp].drop(self.rem[exp].index, axis=0, inplace=True)
+                self.log.info(f"[{exp}] L3 matched: {len(self.data[exp])} | {np.round((len(self.data[exp])/n)*100)}%")
             except KeyError:
                 continue
 
@@ -655,10 +634,11 @@ class JwstCalIngest:
         if data is not None:
             data['imgsize_gb'] = data['imagesize'].apply(lambda x: x / 10**6)
             return data
-        for exp_type in self.exp_types:
+        for exp in self.exp_types:
             try:
-                if 'imagesize' in self.data[exp_type].columns:
-                    self.data[exp_type]['imgsize_gb'] = self.data[exp_type]['imagesize'].apply(lambda x: x / 10**6)
+                if 'imagesize' in self.data[exp].columns:
+                    self.data[exp]['imgsize_gb'] = self.data[exp]['imagesize'].apply(lambda x: x / 10**6)
+                    self.raw[exp]['imgsize_gb'] = self.data[exp]['imgsize_gb']
             except KeyError:
                 continue
 
@@ -710,18 +690,20 @@ class JwstCalIngest:
             self.log.warning(f"0 repro candidates matched.")
 
     def save_training_sets(self):
-        for exp_type in self.exp_types:
-            if exp_type in self.data.keys() and len(self.data[exp_type]) > 0:
-                fpath = self.trainpath.format(exp_type.lower())
-                self.data[exp_type][self.idxcol] = self.data[exp_type].index
-                kwargs = self.save_kwargs(fpath)
-                self.data[exp_type].to_csv(fpath, **kwargs)
-                self.log.info(f"{exp_type} training data saved to: {fpath}")
-            if exp_type in self.rem.keys() and len(self.rem[exp_type]) > 0:
-                rpath = self.rempath.format(exp_type.lower())
-                self.rem[exp_type][self.idxcol] = self.rem[exp_type].index
-                self.rem[exp_type].to_csv(rpath, index=False)
-                self.log.info(f"Remaining {exp_type} data saved to: {rpath}")
+        for exp in self.exp_types:
+            if exp in self.data.keys() and len(self.data[exp]) > 0:
+                fpath = self.trainpath.format(exp.lower())
+                self.data[exp][self.idxcol] = self.data[exp]['pname']
+                self.data[exp].to_csv(fpath, **self.save_kwargs(fpath))
+                self.log.info(f"{exp} training data saved to: {fpath}")
+                wpath = self.rawpath.format(exp.lower())
+                self.raw[exp][self.idxcol] = self.raw[exp]['pname']
+                self.raw[exp].to_csv(wpath, **self.save_kwargs(wpath))
+            if exp in self.rem.keys() and len(self.rem[exp]) > 0:
+                rpath = self.rempath.format(exp.lower())
+                self.rem[exp][self.idxcol] = self.rem[exp].index
+                self.rem[exp].to_csv(rpath, index=False)
+                self.log.info(f"Remaining {exp} data saved to: {rpath}")
 
     def save_ingest_data(self, save_l1=True):
         self.df[self.idxcol] = self.df.index
@@ -730,23 +712,18 @@ class JwstCalIngest:
         else:
             di = self.df.loc[self.df.pname.isna()].copy()
             di.drop(['pname'], axis=1, inplace=True)
-        kwargs = self.save_kwargs(self.ingest_file)
-        di.to_csv(self.ingest_file, **kwargs)
+        di.to_csv(self.ingest_file, **self.save_kwargs(self.ingest_file))
         self.log.info(f"Remaining Ingest data saved to: {self.ingest_file}")
-
         dp = self.df.drop(di.index, axis=0)
         if len(dp) > 0:
             if save_l1 is True:
                 l1 = dp.loc[dp.dag.isin(self.l1_dags)]
                 l1_path = f"{self.outpath}/level1.csv"
-                kwargs = self.save_kwargs(l1_path)
-                l1.to_csv(l1_path, **kwargs)
+                l1.to_csv(l1_path, **self.save_kwargs(l1_path))
                 self.log.info(f"{len(l1)} L1 products added to: {l1_path}")
-
             dp = dp.loc[dp.dag.isin(self.l3_dags)]
             ppath = f"{self.outpath}/training.csv"
-            kwargs = self.save_kwargs(ppath)
-            dp.to_csv(ppath, **kwargs)
+            dp.to_csv(ppath, **self.save_kwargs(ppath))
             self.log.info(f"{len(dp)} L3 products added to: {ppath}")
 
 

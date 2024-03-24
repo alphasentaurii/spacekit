@@ -6,7 +6,7 @@ EXPECTED = {
     "niriss": {"gbSize": 2.24},
     "miri": {"gbSize": 3.5},
     "nircam": {"gbSize": 1.46},
-    "nirspec": {"gbSize": 3.29}
+    "nirspec": {"gbSize": 1.34}
 }
 
 
@@ -28,6 +28,8 @@ def test_jwst_cal_predict(jwstcal_input_path):
     jcal.run_inference()
     assert len(jcal.input_data['IMAGE']) == 3
     assert jcal.inputs['IMAGE'].shape == (3, 18)
+    assert jcal.input_data['SPEC'].shape == (1, 27)
+    assert jcal.inputs['SPEC'].shape == (1, 18)
     for k, v in jcal.predictions.items():
         instr = k.split("_")[2]
         assert EXPECTED[instr]["gbSize"] == v["gbSize"]
@@ -98,12 +100,11 @@ def test_jwst_cal_predict_fnf_exception():
 @mark.jwst
 @mark.predict
 def test_jwst_cal_predict_radec_nans_skip(jwstcal_input_path):
-    jcal = JwstCalPredict(input_path=jwstcal_input_path, pid=1022)
+    input_path = jwstcal_input_path + "/nans"
+    jcal = JwstCalPredict(input_path=input_path)
     jcal.preprocess()
     # should ignore the bad exposure (NaN ra_ref val) but keep nrs2 exp
     assert jcal.inputs['SPEC'].shape == (1, 18)
-    nexposur = jcal.input_data['SPEC'].loc['jw01022-o016_t1_nirspec_g140h-f100lp']['nexposur']
-    assert nexposur == 1
-    detector = jcal.input_data['SPEC'].loc['jw01022-o016_t1_nirspec_g140h-f100lp']['detector']
+    assert jcal.input_data['SPEC'].loc['jw01022-o016_t1_nirspec_g140h-f100lp']['nexposur'] == 1
     # nrs2 only (nrs1 exposure was removed)
-    assert detector == 16
+    assert jcal.input_data['SPEC'].loc['jw01022-o016_t1_nirspec_g140h-f100lp']['detector'] == 16

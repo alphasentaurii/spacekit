@@ -146,15 +146,15 @@ L3_TYPES = [
     "NRC_IMAGE",
     "MIR_LRS-FIXEDSLIT",
     "MIR_MRS",
-    "MIR_LYOT",
-    "MIR_4QPM",
+    "MIR_LYOT", # coron
+    "MIR_4QPM", # coron
     "MIR_LRS-SLITLESS",  # (only IF TSO)
-    "NRC_CORON",
+    "NRC_CORON", # coron
     "NRC_WFSS",
     "NRC_TSIMAGE",  # TSO always
     "NRC_TSGRISM",  # TSO always
     "NIS_IMAGE",
-    "NIS_AMI",
+    "NIS_AMI", # AMI
     "NIS_WFSS",
     "NIS_SOSS",  # (TSO & Non-TSO)
     "NRS_FIXEDSLIT",

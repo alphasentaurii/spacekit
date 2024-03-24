@@ -854,7 +854,7 @@ class JwstCalScrubber(Scrubber):
         # TARG_RA: TARGNAME=NAN + VISITYPE=PTF
         targra = list(set([
                 v['TARG_RA'] for v in self.exp_headers.values() \
-                    if v['EXP_TYPE'] in targ_exptypes and\
+                    if v['EXP_TYPE'] in targ_exptypes and \
                         v['TARGNAME'] not in targetnames and \
                             v['VISITYPE'] == "PRIME_TARGETED_FIXED"
             ]
@@ -866,7 +866,7 @@ class JwstCalScrubber(Scrubber):
         gstargs = list(set(
             [
                 v['GS_MAG'] for v in self.exp_headers.values() \
-                    if v['GS_MAG'] not in NANVALS and\
+                    if v['GS_MAG'] not in NANVALS and \
                         v['EXP_TYPE'] in targ_exptypes and \
                             v['TARGNAME'] not in targetnames and \
                                 v['VISITYPE'] != "PRIME_TARGETED_FIXED"
@@ -902,16 +902,17 @@ class JwstCalScrubber(Scrubber):
     def verify_target_groups(self):
         """Certain L3 products need to be further defined by their L1 input TARG_RA
         values in addition to all other parameters. This only affects PRIME_TARGETED_FIXED
-        visit types where TARGNAME is not NaN. If multiple unique TARG_RA values (rounded to 6 digits) 
-        are identified within the group of exposures, we can assume each TARG_RA grouping is a unique L3 product.
+        visit types where TARGNAME is not NaN. If multiple unique TARG_RA/DEC values (rounded to 6 digits) 
+        are identified within the group of exposures, we can assume each TARG grouping is a unique L3 product.
         """
         revised = dict()
         for expmode, data in self.expdata.items():
             multitra = [
                 k for k, v in data.items() \
                     if np.unique([np.round(j['TARG_RA'], 6) for j in v.values()]).size > 1 and \
-                        list(v.values())[0]['VISITYPE'] == 'PRIME_TARGETED_FIXED' and \
-                            list(v.values())[0]['TARGNAME'] in self.targetnames
+                        np.unique([np.round(j['TARG_DEC'], 6) for j in v.values()]).size > 1 and \
+                            list(v.values())[0]['VISITYPE'] == 'PRIME_TARGETED_FIXED' and \
+                                list(v.values())[0]['TARGNAME'] in self.targetnames
             ]
             if multitra:
                 revised[expmode] = multitra

@@ -209,6 +209,7 @@ class JwstCalPredict:
         X = self.inputs.get("IMAGE", None)
         if X is None or input_data is None:
             return
+        self.log.info("Estimating memory footprints : L3 IMAGE")
         product_index = list(input_data.index)
         imgsize = self.regressor(self.img3_reg.model, X)
         for i, _ in enumerate(X):
@@ -222,6 +223,7 @@ class JwstCalPredict:
         X = self.inputs.get("SPEC", None)
         if X is None or input_data is None:
             return
+        self.log.info("Estimating memory footprints : L3 SPEC")
         product_index = list(input_data.index)
         imgsize = self.regressor(self.spec3_reg.model, X)
         for i, _ in enumerate(X):
@@ -234,10 +236,9 @@ class JwstCalPredict:
         if not self.inputs:
             self.preprocess()
         if self.img3_reg:
-            self.log.info("Estimating memory footprints : L3 IMAGE")
             self.run_image_inference()
         if self.spec3_reg:
-            self.log.info("Estimating memory footprints : L3 SPEC")
+            
             self.run_spec_inference()
         self.log.info(f"predictions: {self.predictions}")
 
