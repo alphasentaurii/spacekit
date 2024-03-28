@@ -143,8 +143,8 @@ class SkyTransformer:
             if detector is not None and detector.upper() not in detectors:
                 detectors.append(detector.upper())
             # MIRI MRS: determine bands used: short, long, shortmedium, shortmediumlong
-            if band is not None and band.upper() not in bands:
-                bands.append(band.upper())
+            if band is not None:
+                bands.extend([b.upper() for b in band.split('-') if b.upper() not in bands])
         # Throw out any exposures with invalid data
         for k in bad_fiducials.keys():
             del exp_data[k]

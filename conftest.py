@@ -7,7 +7,7 @@ from spacekit.analyzer.explore import HstCalPlots, HstSvmPlots
 from spacekit.analyzer.scan import HstSvmScanner, HstCalScanner, import_dataset
 from spacekit.extractor.load import load_datasets, extract_file
 from spacekit.skopes.jwst.cal.config import KEYPAIR_DATA
-
+from spacekit.preprocessor.scrub import JwstCalScrubber
 
 TESTED_VERSIONS = {}
 
@@ -348,3 +348,79 @@ def hst_cal_predict_visits():
 @fixture(scope="function")
 def jwstcal_input_path():
     return "tests/data/jwstcal/predict/inputs"
+
+
+@fixture(scope="module")
+def jwstcal_scrub_filepath():
+    return "tests/data/jwstcal/scrub/{}-inputs.csv"
+
+
+@fixture(scope="module")
+def jwst_cal_img_data(jwstcal_scrub_filepath):
+    data = pd.read_csv(jwstcal_scrub_filepath.format('img'), index_col="Dataset")
+    data['PROGRAM'] = data['PROGRAM'].apply(lambda x: '{:0>5}'.format(x))
+    data['OBSERVTN'] = data['OBSERVTN'].apply(lambda x: '{:0>3}'.format(x))
+    return data
+
+
+@fixture(scope="function")
+def jwst_cal_wfsc_data(jwstcal_scrub_filepath):
+    data = pd.read_csv(jwstcal_scrub_filepath.format('wfsc'), index_col="Dataset")
+    data['PROGRAM'] = data['PROGRAM'].apply(lambda x: '{:0>5}'.format(x))
+    data['OBSERVTN'] = data['OBSERVTN'].apply(lambda x: '{:0>3}'.format(x))
+    return data
+
+
+@fixture(scope="module")
+def jwst_cal_spec_data(jwstcal_scrub_filepath):
+    data = pd.read_csv(jwstcal_scrub_filepath.format('spec'), index_col="Dataset")
+    data['PROGRAM'] = data['PROGRAM'].apply(lambda x: '{:0>5}'.format(x))
+    data['OBSERVTN'] = data['OBSERVTN'].apply(lambda x: '{:0>3}'.format(x))
+    return data
+
+
+@fixture(scope="module")
+def jwst_cal_tac_data(jwstcal_scrub_filepath):
+    data = pd.read_csv(jwstcal_scrub_filepath.format('tac'), index_col="Dataset")
+    data['PROGRAM'] = data['PROGRAM'].apply(lambda x: '{:0>5}'.format(x))
+    data['OBSERVTN'] = data['OBSERVTN'].apply(lambda x: '{:0>3}'.format(x))
+    return data
+
+
+@fixture(scope="module")
+def jwst_cal_img_df(jwst_cal_img_data):
+    scrubber = JwstCalScrubber(
+        "tmp",
+        data=jwst_cal_img_data, 
+        mode='df',
+        encoding_pairs=KEYPAIR_DATA
+    )
+    df = pd.DataFrame.from_dict(scrubber.imgpix, orient='index')
+    df['name'] = ['_'.join([n.split('_')[0]] + n.split('_')[2:]) for n in list(df.index)]
+    return df
+
+
+@fixture(scope="module")
+def jwst_cal_spec_df(jwst_cal_spec_data):
+    scrubber = JwstCalScrubber(
+        "tmp",
+        data=jwst_cal_spec_data, 
+        mode='df',
+        encoding_pairs=KEYPAIR_DATA
+    )
+    df = pd.DataFrame.from_dict(scrubber.specpix, orient='index')
+    df['name'] = ['_'.join([n.split('_')[0]] + n.split('_')[2:]) for n in list(df.index)]
+    return df
+
+
+@fixture(scope="module")
+def jwst_cal_tac_df(jwst_cal_tac_data):
+    scrubber = JwstCalScrubber(
+        "tmp",
+        data=jwst_cal_tac_data, 
+        mode='df',
+        encoding_pairs=KEYPAIR_DATA
+    )
+    df = pd.DataFrame.from_dict(scrubber.tacpix, orient='index')
+    df['name'] = ['_'.join([n.split('_')[0]] + n.split('_')[2:]) for n in list(df.index)]
+    return df

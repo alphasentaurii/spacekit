@@ -182,22 +182,36 @@ def test_scrape_drizzle_fits(scrubbed_svm_data, single_visit_path):
 @mark.scrape
 def test_jwst_cal_scraper(jwstcal_input_path):
     scraper = JwstFitsScraper(jwstcal_input_path, data=None, sfx="_uncal.fits")
-    assert len(scraper.fpaths) == 12
+    assert len(scraper.fpaths) == 26
     exp_headers = scraper.scrape_fits()
-    assert len(exp_headers) == 12
+    assert len(exp_headers) == 26
     assert sorted(list(exp_headers.keys())) == [
         'jw01018006001_02101_00001_nis',
         'jw01018006001_02101_00002_nis',
         'jw01018006001_02101_00003_nis',
         'jw01018006001_02101_00004_nis',
-        'jw01022016001_gsradec_nan_nrs2',
-        'jw01022016001_raref_nan_nrs1',
+        'jw01022016001_03101_00001_nrs1',
+        'jw01022016001_03101_00001_nrs2',
+        'jw01192011001_02101_00001_mirifulong',
+        'jw01192011001_02101_00001_mirifushort',
+        'jw01192011001_02101_00002_mirifulong',
+        'jw01192011001_02101_00002_mirifushort',
+        'jw01192011001_02103_00001_mirifulong',
+        'jw01192011001_02103_00001_mirifushort',
+        'jw01192011001_02103_00002_mirifulong',
+        'jw01192011001_02103_00002_mirifushort',
+        'jw01192011001_02105_00001_mirifulong',
+        'jw01192011001_02105_00001_mirifushort',
+        'jw01192011001_02105_00002_mirifulong',
+        'jw01192011001_02105_00002_mirifushort',
+        'jw01309023001_02101_00001_nrcalong',
+        'jw01309023001_02101_00002_nrcalong',
         'jw02732001005_02103_00005_nrcb1',
         'jw02732001005_02103_00005_nrcb2',
         'jw02732001005_02103_00005_nrcb3',
         'jw02732001005_02103_00005_nrcb4',
         'jw02732005001_02105_00001_mirimage',
-        'jw02732005001_02105_00002_mirimage',
+        'jw02732005001_02105_00002_mirimage'
     ]
     keys = [
         'jw02732005001_02105_00001_mirimage',

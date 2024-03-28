@@ -3,10 +3,12 @@ from spacekit.skopes.jwst.cal.predict import JwstCalPredict, predict_handler
 
 
 EXPECTED = {
-    "niriss": {"gbSize": 2.24},
-    "miri": {"gbSize": 3.5},
-    "nircam": {"gbSize": 1.46},
-    "nirspec": {"gbSize": 1.34}
+    "jw01018-o006_niriss": {'gbSize': 2.24},
+    "jw02732-o001_nircam": {'gbSize': 1.46},
+    "jw02732-o005_miri": {'gbSize': 3.5},
+    "jw01022-o016_nirspec": {'gbSize': 1.34},
+    "jw01192-o011_miri": {'gbSize': 3.54},
+    "jw01309-o023_nircam": {'gbSize': 11.38},
 }
 
 
@@ -28,21 +30,21 @@ def test_jwst_cal_predict(jwstcal_input_path):
     jcal.run_inference()
     assert len(jcal.input_data['IMAGE']) == 3
     assert jcal.inputs['IMAGE'].shape == (3, 18)
-    assert jcal.input_data['SPEC'].shape == (1, 27)
-    assert jcal.inputs['SPEC'].shape == (1, 18)
+    assert jcal.input_data['SPEC'].shape == (3, 27)
+    assert jcal.inputs['SPEC'].shape == (3, 18)
     for k, v in jcal.predictions.items():
-        instr = k.split("_")[2]
-        assert EXPECTED[instr]["gbSize"] == v["gbSize"]
+        name = '_'.join([k.split('_')[0], k.split("_")[2]])
+        assert EXPECTED[name]["gbSize"] == v["gbSize"]
 
 
 @mark.jwst
 @mark.predict
 def test_jwst_cal_predict_handler(jwstcal_input_path):
     jcal = predict_handler(jwstcal_input_path)
-    assert len(jcal.predictions) == 4
+    assert len(jcal.predictions) == 6
     for k, v in jcal.predictions.items():
-        instr = k.split("_")[2]
-        assert EXPECTED[instr]["gbSize"] == v["gbSize"]
+        name = '_'.join([k.split('_')[0], k.split("_")[2]])
+        assert EXPECTED[name]["gbSize"] == v["gbSize"]
 
 
 @mark.jwst

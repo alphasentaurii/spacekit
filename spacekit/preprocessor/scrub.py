@@ -575,7 +575,7 @@ class JwstCalScrubber(Scrubber):
         self.xcols = self.xcol_order
         self.encoding_pairs = encoding_pairs
         self.mode = mode
-        self.coron_ami = ["MIR_4QPM", "MIR_LYOT", "NRC_CORON", "NIS_AMI"]
+        self.tso_ami_coron = ["MIR_4QPM", "MIR_LYOT", "NRC_CORON", "NIS_AMI", "NRS_BRIGHTOBJ", "NRC_TSGRISM", "NRC_TSIMAGE"]
         self.scrape_inputs()
         self.get_level3_products()
         self.pixel_offsets()
@@ -696,6 +696,7 @@ class JwstCalScrubber(Scrubber):
         self.products.update(self.imgpix)
         sky.set_keys(ra="RA_REF", dec="DEC_REF")
         self.specpix = sky.calculate_offsets(self.spec_products)
+        self.rename_miri_mrs()
         self.products.update(self.specpix)
         if self.mode != 'df': # use fits data
             sky.count_exposures = False
@@ -733,7 +734,7 @@ class JwstCalScrubber(Scrubber):
         else:
             p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{subarray}".lower()
 
-        if v['EXP_TYPE'] in self.coron_ami or v["TSOVISIT"] in TRUEVALS:
+        if v['EXP_TYPE'] in self.tso_ami_coron or v["TSOVISIT"] in TRUEVALS:
             self.make_tac_product_name(k, v, p)
             return
         elif v["INSTRUME"] == "FGS":
@@ -773,29 +774,19 @@ class JwstCalScrubber(Scrubber):
         grating = (
             f"{v['GRATING']}" if v["GRATING"] not in NANVALS else ""
         )
-        if fltr or grating:
-            if not grating:
-                if pupil:
-                    if exptype in ["NRC_WFSS", "NIS_SOSS", "NRC_TSGRISM"]:
-                        optelem = f"{fltr}-{pupil}"
-                    else:
-                        optelem = f"{pupil}-{fltr}"
-                else:
-                    optelem = fltr # miri, niriss
-            elif not fltr:
-                optelem = grating
-            elif exptype == "NRS_IFU":
-                optelem = f"{grating}-{fltr}"
-            else:
-                optelem = f"{fltr}-{grating}"
+        if pupil:
+            optelem = f"{fltr}-{pupil}" if exptype in ["NRC_WFSS", "NIS_SOSS", "NRC_TSGRISM"] else f"{pupil}-{fltr}"
+        elif grating: 
+            optelem = f"{grating}-{fltr}" if exptype == "NRS_IFU" else f"{fltr}-{grating}"
         else:
-            optelem = "" # miri mrs
+            optelem = fltr # mir_mrs: fltr = ""
+
         slit = f"-{v['FXD_SLIT']}" if v["FXD_SLIT"] not in NANVALS else ""
         subarray = f"-{v['SUBARRAY']}" if v["SUBARRAY"] not in SUBNAN else ""
         
         p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{slit}{subarray}".lower()
         
-        if exptype in self.coron_ami or v["TSOVISIT"] in TRUEVALS:
+        if exptype in self.tso_ami_coron or v["TSOVISIT"] in TRUEVALS:
             if fltr == 'CLEAR' and grating == 'PRISM':
                 # drop fxd slit from product name
                 p = f"jw{v['PROGRAM']}-o{v['OBSERVTN']}_{tnum}_{v['INSTRUME']}_{optelem}{subarray}".lower()
@@ -823,6 +814,8 @@ class JwstCalScrubber(Scrubber):
         """
         if self.mode != 'fits':
             del v["NEXPOSUR"]
+        if v['EXP_TYPE'] == 'NRC_CORON':
+            p += '-image3'
         if p in self.tac_products:
             self.tac_products[p][k] = v
         else:
@@ -840,36 +833,37 @@ class JwstCalScrubber(Scrubber):
         the id is always "s00001". Exposures with TARGNAME=NaN are grouped by TARG_RA if VISITYPE="PRIME_TARGETED_FIXED"; the remainder by GS_MAG except those where GS_MAG=NaN (typically VISITYPE=PARALLEL_PURE) which default to 't0'.
         """
         targ_exptypes = [t for t in self.level3_types if t not in self.source_based]
-        # TARGNAME: default grouping strategy
-        targetnames = list(set(
-            [
-                v['TARGNAME'] for v in self.exp_headers.values() \
-                    if v['EXP_TYPE'] in targ_exptypes and \
-                        v['TARGNAME'] not in NANVALS
-            ]
-        ))
-        tnums = [f"t{i+1}" for i, _ in enumerate(targetnames)]
-        tn = dict(zip(targetnames, tnums))
-
-        # TARG_RA: TARGNAME=NAN + VISITYPE=PTF
+        # TARG_RA:  Fixed Targets
         targra = list(set([
-                v['TARG_RA'] for v in self.exp_headers.values() \
+                np.round(v['TARG_RA'], 6) for v in self.exp_headers.values() \
                     if v['EXP_TYPE'] in targ_exptypes and \
-                        v['TARGNAME'] not in targetnames and \
-                            v['VISITYPE'] == "PRIME_TARGETED_FIXED"
+                        v['VISITYPE'] == "PRIME_TARGETED_FIXED"
             ]
         ))
         rnums = [f"t{i+1}" for i, _ in enumerate(targra)]
         rn = dict(zip(targra, rnums))
 
-        # GS_MAG
+        # TARGNAME: NON Fixed Target grouping strategy (if TARGNAME)
+        targetnames = list(set(
+            [
+                v['TARGNAME'] for v in self.exp_headers.values() \
+                    if v['EXP_TYPE'] in targ_exptypes and \
+                        v['TARGNAME'] not in NANVALS and \
+                            v['VISITYPE'] != "PRIME_TARGETED_FIXED"
+            ]
+        ))
+        tnums = [f"t{i+1}" for i, _ in enumerate(targetnames)]
+        tn = dict(zip(targetnames, tnums))
+
+        # GS_MAG : Non-Fixed Targets, No Targname (if GS_MAG)
+        # mainly PRIME_WFSC_ROUTINE, PRIME_WFSC_SENSING_CONTROL, PRIME_UNTARGETED
         gstargs = list(set(
             [
                 v['GS_MAG'] for v in self.exp_headers.values() \
                     if v['GS_MAG'] not in NANVALS and \
                         v['EXP_TYPE'] in targ_exptypes and \
                             v['TARGNAME'] not in targetnames and \
-                                v['VISITYPE'] != "PRIME_TARGETED_FIXED"
+                                v['VISITYPE'] not in ["PRIME_TARGETED_FIXED", "PARALLEL_PURE"]
             ]
         ))
         gnums = [f"t{i+1}" for i, _ in enumerate(gstargs)]
@@ -892,7 +886,7 @@ class JwstCalScrubber(Scrubber):
                 if exp_type in self.source_based:
                     tnum = 's00001'         
                 else:
-                    tnum = tn.get(v['TARGNAME'], rn.get(v['TARG_RA'], gn.get(v['GS_MAG'], 't0')))
+                    tnum = tn.get(v['TARGNAME'], rn.get(np.round(v['TARG_RA'], 6), gn.get(v['GS_MAG'], 't0')))
                 if "IMAGE" in exp_type.split("_")[-1]:
                     self.make_image_product_name(k, v, tnum)
                 else:
@@ -1011,6 +1005,17 @@ class JwstCalScrubber(Scrubber):
         self.df.loc[self.df['detector'].isin(multi_nrca), 'detector'] = 'NRCA-M'
         self.df.loc[self.df['detector'].isin(multi_nrcb), 'detector'] = 'NRCB-M'
         self.df.loc[self.df['detector'].isin(multi_nrcab), 'detector'] = 'NRC-M'
+    
+    def rename_miri_mrs(self):
+        mirmrs = {}
+        for k, v in self.specpix.items():
+            if k[-1] == '_':
+                bands = ''.join(v['BAND'].split('|'))
+                if bands:
+                    mirmrs[k] = k + f'ch1-{bands.lower()}'
+        for k, v in mirmrs.items():
+            self.specpix[v] = self.specpix.pop(k)
+            self.spec_products[v] = self.spec_products.pop(k)
 
     def get_dtype_keys(self):
         """Group input metadata into pre-set data types before applying NaNdlers.

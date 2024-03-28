@@ -303,7 +303,7 @@ KEYPAIR_DATA = {
         "NRS_MSASPEC": 20,
     },
     "channel": {"NONE": 0, "12": 1, "34": 2, "LONG": 3, "SHORT": 4},
-    "band": {"NONE": 0, "LONG": 0, "LONG-SHORT": 0, "MEDIUM": 0, "MEDIUM-SHORT": 0, "SHORT": 0, "SHORT|LONG": 0, "SHORT|MEDIUM": 0, "MEDIUM|LONG": 0, "SHORT|MEDIUM|LONG": 1, "SHORT|MEDIUM-SHORT|LONG-SHORT": 1, 'SHORT|MEDIUM-SHORT|MEDIUM|LONG-SHORT|LONG':1},
+    "band": {"NONE": 0, "LONG": 0, "MEDIUM": 0, "SHORT": 0, "SHORT|LONG": 0, "SHORT|MEDIUM": 0, "MEDIUM|LONG": 0, "SHORT|MEDIUM|LONG": 1},
     "subarray": {
         "NONE": 0,
         "ALLSLITS": 1,
