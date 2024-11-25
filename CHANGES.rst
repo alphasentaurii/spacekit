@@ -5,9 +5,10 @@ docs
 ----
 - Use furo as sphinx theme, improve page hierarchy and add custom domain [#104]
 - downgrade numpy for compatibility with tensorflow in docs [#106]
+- fix hyperlinks [#107]
 
 preprocessor
-------------
+------------ 
 - explicitly pass `encoding=bytes` in transform.hypersonic_pliers for numpy 2 compatibility where this will no longer be the default for np.loadtxt [#92]
 
 builder
