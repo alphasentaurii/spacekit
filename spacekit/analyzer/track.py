@@ -1,10 +1,12 @@
-import sys
-import numpy as np
 import datetime as dt
-import os
 import glob
+import os
+import sys
 import time
-from spacekit.logger.log import Logger, SPACEKIT_LOG
+
+import numpy as np
+
+from spacekit.logger.log import SPACEKIT_LOG, Logger
 
 
 class Stopwatch:
@@ -197,8 +199,7 @@ def record_metrics(log_dir, visit, wall, clock, ps="svm", n_files=None, total_si
         metrics.update({"n_files": n_files, "total_size": total_size})
 
     with open(log_file, "w") as lf:
-        for k, v in metrics.items():
-            lf.write(f"{k}: {v}\n")
+        lf.writelines(f"{k}: {v}\n" for k, v in metrics.items())
 
 
 def xtimer(fn):
@@ -207,7 +208,7 @@ def xtimer(fn):
         to_execute = fn(*args, **kwargs)
         end_time = time.perf_counter()
         execution_time = end_time - start_time
-        SPACEKIT_LOG.info("{0} took {1:.8f}s to execute".format(fn.__name__, execution_time))
+        SPACEKIT_LOG.info(f"{fn.__name__} took {execution_time:.8f}s to execute")
         return to_execute
 
     return inner

@@ -245,13 +245,13 @@ def compute_results(ens, tv_idx, val_set=(), output_path=None):
     res_path = os.path.join(output_path, "results")
     # test set
     ens.test_idx = tv_idx[0]
-    com = ComputeBinary(builder=ens, res_path=f"{res_path}/test")
+    com = ComputeBinary(builder=ens, res_path=f"{res_path}/test", classes=["aligned", "misaligned"])
     com.calculate_results()
     _ = com.make_outputs()
     # validation set
     if len(val_set) == 2 and val_set[0][0].shape[0] > 2:  # temp (ignores test data)
         (ens.X_val, ens.y_val), ens.test_idx = val_set, tv_idx[1]
-        val = ComputeBinary(builder=ens, res_path=f"{res_path}/val", validation=True)
+        val = ComputeBinary(builder=ens, res_path=f"{res_path}/val", classes=["aligned", "misaligned"], validation=True)
         val.calculate_results()
         _ = val.make_outputs()
     else:

@@ -9,16 +9,18 @@ but can easily be repurposed for other use-cases (analyzing model performance
 in Jupyter notebooks/Google Colab, for example).
 """
 
-import os
-import pandas as pd
 import glob
+import os
+
+import pandas as pd
+
 from spacekit.analyzer.compute import ComputeBinary, ComputeMulti, ComputeRegressor
 from spacekit.logger.log import Logger
 from spacekit.skopes.jwst.cal.config import KEYPAIR_DATA
 
 try:
-    import plotly.graph_objects as go
     import plotly.figure_factory as ff
+    import plotly.graph_objects as go
     from plotly import subplots
 except ImportError:
     go = None
@@ -169,7 +171,7 @@ class MegaScanner:
         versions = []
         for i, (d, t) in enumerate(zip(self.dates, self.timestamps)):
             if self.versions is None:
-                v = f"v{str(i)}"
+                v = f"v{i!s}"
                 versions.append(v)
             else:
                 v = self.versions[i]
@@ -526,8 +528,8 @@ class MegaScanner:
             annot = list(cmx_fig.layout.annotations)
 
             for k in range(len(annot)):
-                annot[k]["xref"] = f"x{str(col)}"
-                annot[k]["yref"] = f"y{str(col)}"
+                annot[k]["xref"] = f"x{col!s}"
+                annot[k]["yref"] = f"y{col!s}"
             annos.append(annot)
         new_annotations = []
         for a in annos:
