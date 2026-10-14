@@ -282,7 +282,6 @@ class Computer:
         self.roc_fig = self.make_roc_curve()
         self.pr_fig = self.make_pr_curve()
         self.cm_fig, self.cmx_norm = self.fusion_matrix(self.cmx, self.classes)
-        return self
 
     # Matplotlib "static" alternative to interactive plotly version
     def roc_plots(self):

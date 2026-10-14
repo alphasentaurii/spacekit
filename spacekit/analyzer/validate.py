@@ -34,18 +34,18 @@ DEPTH = DIM * CH
 SHAPE = (DIM, WIDTH, HEIGHT, CH)
 TF_CPP_MIN_LOG_LEVEL = 2
 
-params = dict(
-    batch_size=32,
-    epochs=200,
-    lr=1e-4,
-    decay=[100000, 0.96],
-    early_stopping=None,
-    verbose=2,
-    ensemble=True,
-)
+params = {
+    "batch_size": 32,
+    "epochs": 200,
+    "lr": 1e-4,
+    "decay": [100000, 0.96],
+    "early_stopping": None,
+    "verbose": 2,
+    "ensemble": True,
+}
 
 
-timestring = dt.datetime.now().isoformat()[:-7]  # 2022-01-19T21:31:21
+timestring = dt.datetime.now(tz=dt.timezone.utc).isoformat()[:-7]  # 2022-01-19T21:31:21
 timestamp = int(dt.datetime.fromisoformat(timestring).timestamp())
 dtstring = timestring.split("T")[0] + "-" + str(timestamp)
 output_path = f"{DATA}/{dtstring}"  # 2022-02-14-1644850390

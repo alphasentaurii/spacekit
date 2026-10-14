@@ -10,10 +10,7 @@ from spacekit.generator.augment import augment_image
 from spacekit.logger.log import Logger
 from spacekit.preprocessor.transform import PowerX
 
-try:
-    from keras.preprocessing.image import array_to_img
-except ImportError:
-    from tensorflow.keras.utils import array_to_img
+from keras.preprocessing.image import array_to_img
 
 try:
     import matplotlib as mpl
