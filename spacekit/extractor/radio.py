@@ -9,9 +9,10 @@ import pandas as pd
 from spacekit.logger.log import Logger
 
 try:
+    from astroquery.exceptions import ResolverError
     from astroquery.mast import Observations
 except ImportError:
-    Observations = None
+    Observations = None 
 
 try:
     import boto3
@@ -81,6 +82,7 @@ class Radio:
                 "radio module to work. \n\nInstall all extra deps via "
                 "`pip install spacekit[x]`"
             )
+        
         self.configure_aws()
 
     def configure_aws(self):
@@ -198,7 +200,7 @@ class Radio:
                 self.s3_uris.append(uri)
                 if uri in self.errors:
                     self.errors.remove(uri)
-            except Exception:  # ResolverError:
+            except ResolverError:
                 self.log.error(f"Could not resolve {target} to a sky position.")
                 self.errors.append(target)
                 continue
@@ -460,7 +462,7 @@ class JwstCalRadio(Radio):
                             self.log.info(f"{k} = {match['pname']} = {match['asn']}")
                     else:
                         self.log_error(k, exptype)
-                except Exception as e:
+                except ResolverError as e:
                     self.errs[exptype][k] = str(e)
             nresults = len(self.product_matches[exptype])
             self.log.info(f"{nresults} of {len(products)} matched for {exptype}.")
@@ -506,7 +508,7 @@ class JwstCalRadio(Radio):
         if len(obs) > 0:
             try:
                 targname = obs["target_name"][0]
-            except Exception:
+            except IndexError:
                 targname = None
             data_prod = Observations.get_product_list(obs["obsid"])
             filt_prod = Observations.filter_products(data_prod, **self.asn_kwargs)
@@ -552,7 +554,7 @@ class JwstCalRadio(Radio):
                         self.log.info(f"{k} = {match['pname']} = {match['asn']}")
                 else:
                     self.log_error(k, "IMAGE")
-            except Exception as e:
+            except ResolverError as e:
                 self.errs["IMAGE"][k] = str(e)
         nresults = len(self.product_matches["IMAGE"])
         self.log.info(f"{nresults} of {len(image_products)} matched.")
@@ -575,7 +577,7 @@ class JwstCalRadio(Radio):
                         self.log.info(f"{k} = {match['pname']} = {match['asn']}")
                 else:
                     self.log_error(k, "SPEC")
-            except Exception as e:
+            except ResolverError as e:
                 self.errs["SPEC"][k] = str(e)
         nresults = len(self.product_matches["SPEC"])
         self.log.info(f"{nresults} of {len(spec_products)} matched.")
@@ -598,7 +600,7 @@ class JwstCalRadio(Radio):
                         self.log.info(f"{k} = {match['pname']} = {match['asn']}")
                 else:
                     self.log_error(k, "TAC")
-            except Exception as e:
+            except ResolverError as e:
                 self.errs["TAC"][k] = str(e)
         nresults = len(self.product_matches["TAC"])
         self.log.info(f"{nresults} of {len(tac_products)} matched.")
