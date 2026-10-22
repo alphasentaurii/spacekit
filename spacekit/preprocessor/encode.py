@@ -35,7 +35,7 @@ def encode_booleans(df, cols, special=False, replace=False, rename="", verbose=F
         encoded_cols.append(enc_col)
         if special is True:
             truevals = list(df_bool[col].value_counts().index)
-            df_bool[enc_col] = df_bool[col].apply(lambda x: nan_encoder(x, truevals))
+            df_bool[enc_col] = df_bool[col].isin(truevals).astype(int)
         else:
             df_bool[enc_col] = df_bool[col].apply(lambda x: boolean_encoder(x))
     # merge back into original dataframe
