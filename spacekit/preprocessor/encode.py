@@ -116,8 +116,8 @@ class PairEncoder:
                 add_encoding = max(list(self.keypairs.values())) + 1
                 self.keypairs[u] = add_encoding
                 self.classes_ = list(self.keypairs.keys())
-        except Exception as e:
-            self.log.error("Unable to add encoding for unknown value(s)", e)
+        except (KeyError, ValueError) as e:
+            self.log.error(f"Unable to add encoding for unknown value(s): {u} \n {e}")
 
     def fit(self, data, keypairs, axiscol=None, handle_unknowns=True):
         if isinstance(data, pd.DataFrame):
@@ -126,7 +126,7 @@ class PairEncoder:
                 return
             try:
                 self.arr = np.asarray(data[axiscol], dtype=object)
-            except Exception as e:
+            except (np.exceptions.AxisError, TypeError, ValueError) as e:
                 self.log.error(e)
         elif isinstance(data, np.ndarray):
             if len(data.shape) > 1:
@@ -152,7 +152,7 @@ class PairEncoder:
                 return
         try:
             self.unique = np.unique(self.arr)
-        except Exception as e:
+        except (np.exceptions.AxisError, TypeError, ValueError) as e:
             self.log.error(e)
         return self
 
@@ -665,8 +665,26 @@ class CategoricalKeymaker:
         self.get_inversed_keypairs()
         for col in self.cols:
             keypairs = self.encoding_pairs.get(col, None)
-            if keypairs:
-                self.df[col] = self.df[col].apply(lambda x: self.keypair_encoder(x, keypairs, col))
+            if not keypairs:
+                continue
+            # get unique vals in col
+            unique_series_vals = self.df[col].dropna().unique()
+            # unregistered vals
+            registered_vals = set(keypairs.values())
+            new_vals = [x for x in unique_series_vals if x not in registered_vals]
+            # batch register new vals
+            if new_vals:
+                existing_keys = [int(k) for k in keypairs]
+                next_key = (max(existing_keys) + 1) if existing_keys else 0
+                for x in new_vals:
+                    self.log.warning(f"New value not in keypairs - adding {x}...")
+                    keypairs[str(next_key)] = x
+                    next_key += 1
+                self.encoding_pairs[col] = keypairs
+                self.inversed_pairs[col] = self.inverse_keypairs(keypairs)
+            # map integer keys back and data cast keypair keys as str
+            lookup_dict = {v: int(k) for k, v in keypairs.items()}
+            self.df[col] = self.df[col].map(lookup_dict).fillna(self.df[col])
         return self.df
 
     def non_defaults(self):
@@ -713,8 +731,7 @@ class CategoricalKeymaker:
         val_types = []
         for val in list(self.df[col].value_counts().index):
             if isinstance(val, list):
-                for t in val:
-                    val_types.append(t)
+                val_types.extend(val)
             else:
                 val_types.append(val)
         val_types = sorted(set(val_types))
@@ -779,10 +796,9 @@ class CategoricalKeymaker:
                 self.log.info(f"Moving {zero_val} index from {idx} to 0")
                 keys.pop(idx)
                 keys.insert(0, zero_val)
-            except Exception as e:
+            except IndexError as e:
                 self.log.error(
-                    "Unable to locate zero_val index while making default keypairs",
-                    str(e),
+                    f"Unable to locate zero_val index while making default keypairs: {e!s}"
                 )
         vals = list(range(len(keys)))
         keypairs = dict(zip(keys, vals))
