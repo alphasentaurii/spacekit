@@ -183,7 +183,7 @@ class DrawMosaics:
                 self.datasets.append(visit)
         if len(skip) > 0:
             self.status["skip"] = list(set(skip))
-            self.log.info(f"Skipping found images: {len(self.status["skip"])}")
+            self.log.info(f"Skipping found images: {len(self.status['skip'])}")
         self.log.info(f"\nFound {len(self.datasets)} new datasets.")
         return list(set(self.datasets))
 
