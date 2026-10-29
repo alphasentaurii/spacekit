@@ -142,7 +142,11 @@ def stopwatch(prcname, t0=None, t1=None, out=".", log=True, subset_name=None):
     else:
         info = "STARTED"
         t = t0
-    timestring = dt.datetime.fromtimestamp(t, tz=dt.UTC).strftime("%m/%d/%Y - %H:%M:%S")
+    try:
+        tz = dt.UTC
+    except AttributeError:
+        tz = dt.timezone.utc
+    timestring = dt.datetime.fromtimestamp(t, tz=tz).strftime("%m/%d/%Y - %H:%M:%S")
     message = f"{timestring} [i] {info} [{prcname}]"
     print(message)
 
