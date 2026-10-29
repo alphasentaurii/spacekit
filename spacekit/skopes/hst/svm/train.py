@@ -367,7 +367,7 @@ if __name__ == "__main__":
     else:
         v = 0
     model_name = args.model_name
-    timestamp = str(int(dt.datetime.now(tz=dt.timezone.utc).timestamp()))
+    timestamp = str(int(dt.datetime.now(tz=dt.UTC).timestamp()))
     if args.output_path is None:
         output_path = os.path.join(os.getcwd(), f"mml_{timestamp}")
     else:

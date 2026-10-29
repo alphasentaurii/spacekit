@@ -4,13 +4,12 @@ import warnings
 
 import numpy as np
 import pandas as pd
+from keras.preprocessing.image import array_to_img
 from scipy.stats import iqr
 
 from spacekit.generator.augment import augment_image
 from spacekit.logger.log import Logger
 from spacekit.preprocessor.transform import PowerX
-
-from keras.preprocessing.image import array_to_img
 
 try:
     import matplotlib as mpl
