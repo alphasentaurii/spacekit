@@ -177,8 +177,8 @@ class Computer:
             Outputs created by their respective subclasses using the ``make_outputs`` method.
         """
         if self.res_path is None:
-            timestamp = int(dt.datetime.now(tz=dt.UTC).timestamp())
-            datestamp = dt.datetime.fromtimestamp(timestamp, tz=dt.UTC).date().isoformat()
+            timestamp = int(dt.datetime.now(tz=dt.timezone.utc).timestamp())
+            datestamp = dt.datetime.fromtimestamp(timestamp, tz=dt.timezone.utc).date().isoformat()
             prefix = str(datestamp) + "-" + str(timestamp)
             self.res_path = os.path.join(os.getcwd(), prefix, "results", self.algorithm)
         save_multitype_data(

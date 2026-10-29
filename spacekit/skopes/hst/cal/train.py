@@ -359,19 +359,19 @@ class Train:
 
 def make_timestamp_path(timestamp):
     if timestamp == "now":
-        train_time = dt.datetime.now(tz=dt.UTC)
+        train_time = dt.datetime.now(tz=dt.timezone.utc)
     elif isinstance(timestamp, str):
         if len(timestamp) <= 14:
-            train_time = dt.datetime.fromtimestamp(int(timestamp), tz=dt.UTC)
+            train_time = dt.datetime.fromtimestamp(int(timestamp), tz=dt.timezone.utc)
         else:
             train_time = dt.datetime.fromisoformat(timestamp)
     elif isinstance(timestamp, (int, float)):
-        train_time = dt.datetime.fromtimestamp(timestamp, tz=dt.UTC)
+        train_time = dt.datetime.fromtimestamp(timestamp, tz=dt.timezone.utc)
     else:
         print(f"Timestamp type must be a string (datetime, isoformat) or int/float (timestamp). You passed {type(timestamp)}.")
         raise ValueError
     t0 = train_time.timestamp()
-    data_path = f"{dt.datetime.fromtimestamp(t0, tz=dt.UTC).date()}-{int(t0)!s}"
+    data_path = f"{dt.datetime.fromtimestamp(t0, tz=dt.timezone.utc).date()}-{int(t0)!s}"
     return data_path
 
 

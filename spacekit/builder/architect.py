@@ -423,7 +423,7 @@ class Builder:
         """
         if self.name is None:
             self.name = str(self.model.name)
-            datestamp = dt.datetime.now(tz=dt.UTC).isoformat().split("T")[0]
+            datestamp = dt.datetime.now(tz=dt.timezone.utc).isoformat().split("T")[0]
             model_name = f"{self.name}_{datestamp}"
         else:
             model_name = self.name

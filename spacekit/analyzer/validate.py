@@ -45,7 +45,7 @@ params = {
 }
 
 
-timestring = dt.datetime.now(tz=dt.UTC).isoformat()[:-7]  # 2022-01-19T21:31:21
+timestring = dt.datetime.now(tz=dt.timezone.utc).isoformat()[:-7]  # 2022-01-19T21:31:21
 timestamp = int(dt.datetime.fromisoformat(timestring).timestamp())
 dtstring = timestring.split("T")[0] + "-" + str(timestamp)
 output_path = f"{DATA}/{dtstring}"  # 2022-02-14-1644850390

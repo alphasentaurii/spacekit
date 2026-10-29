@@ -126,8 +126,8 @@ class JwstCalTrain:
                 if not os.path.exists(self.output_path):
                     os.makedirs(self.output_path, exist_ok=True)
                 return
-        today = dt.date.now(tz=dt.UTC).date().isoformat()
-        timestamp = str(dt.datetime.now(tz=dt.UTC).timestamp()).split(".")[0]
+        today = dt.date.now(tz=dt.timezone.utc).date().isoformat()
+        timestamp = str(dt.datetime.now(tz=dt.timezone.utc).timestamp()).split(".")[0]
         self.output_path = f"{base_out}/{today}_{timestamp}/{self.exp_mode}"
         os.makedirs(self.output_path, exist_ok=True)
 

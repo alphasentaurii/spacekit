@@ -48,7 +48,7 @@ class Stopwatch:
         self.log.info(f"CLOCK [{self.ps}] : {self.clocktime}")
 
     def record(self, t, info):
-        timestring = dt.datetime.fromtimestamp(t, tz=dt.UTC).strftime("%m/%d/%Y - %H:%M:%S")
+        timestring = dt.datetime.fromtimestamp(t, tz=dt.timezone.utc).strftime("%m/%d/%Y - %H:%M:%S")
         self.log(f"{timestring} [i] {info} [{self.ps}]")
         if self.delta:
             self.log.info(f"Duration [{self.ps}] : {self.delta[0]} {self.delta[1]}\n")
@@ -143,7 +143,7 @@ def stopwatch(prcname, t0=None, t1=None, out=".", log=True, subset_name=None):
         info = "STARTED"
         t = t0
     try:
-        tz = dt.UTC
+        tz = dt.timezone.utc
     except AttributeError:
         tz = dt.timezone.utc
     timestring = dt.datetime.fromtimestamp(t, tz=tz).strftime("%m/%d/%Y - %H:%M:%S")

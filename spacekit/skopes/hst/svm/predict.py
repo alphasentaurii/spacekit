@@ -107,7 +107,7 @@ def classification_report(df, output_path, group=None):
     C = df.loc[P == 1.0]
     cmp = C["det"].value_counts()
     separator = "---" * 7
-    date, time = dt.datetime.now(tz=dt.UTC).isoformat().split(".")[0].split("T")
+    date, time = dt.datetime.now(tz=dt.timezone.utc).isoformat().split(".")[0].split("T")
     if group is None:
         group = "SVM-DATA"
     out = sys.stdout
